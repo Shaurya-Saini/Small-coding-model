@@ -85,12 +85,18 @@ def load_apps_split(split: str):
 
 def _safe_json(raw, default):
     """APPS stores solutions / input_output as JSON strings; some are empty or
-    malformed. Never let one bad row crash the whole run."""
+    malformed. Never let one bad row crash the whole run.
+
+    `parse_int=str` keeps integer literals as strings instead of converting them
+    to Python ints. Some APPS test cases embed enormous integers (thousands of
+    digits), which trips Python 3.11+'s int-string-length guard
+    (`ValueError: Exceeds the limit (4300 digits) ...`). We only read `fn_name`
+    from this structure, so we never need the values as ints anyway."""
     if not raw:
         return default
     try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+        return json.loads(raw, parse_int=str)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return default
 
 
