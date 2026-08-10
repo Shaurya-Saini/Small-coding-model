@@ -87,8 +87,13 @@ the metrics JSONs above (and the manifest for LiveCodeBench difficulty joins),
 then:
 
 ```bash
-python eval/build_results_table.py     # -> results/report.md
+pip install matplotlib                  # for the diagrams (in requirements-eval.txt)
+python eval/build_results_table.py     # -> results/report.md + results/figures/*.png
 ```
+
+This writes the stratified pass@k table **and** a grouped-bar diagram per
+benchmark (pass@1 by tier, base/finetuned/frontier) into `results/figures/`,
+embedded in `report.md`. Add `--no-charts` for a table-only build.
 
 ---
 

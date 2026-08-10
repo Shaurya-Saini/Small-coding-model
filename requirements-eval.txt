@@ -12,4 +12,5 @@ datasets>=2.16.0
 huggingface_hub>=0.23.0
 transformers>=4.44.0
 accelerate>=0.30.0
+matplotlib>=3.7.0   # results diagrams (eval/build_results_table.py)
 # vllm            # optional — much faster batched generation for pass@k with k>1

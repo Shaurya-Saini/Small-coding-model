@@ -1,7 +1,9 @@
 # 02 — Kaggle Training Run
 
-> **Status: DRAFT (pre-verification).** Correct this after the first real Kaggle
-> run to match what actually happened (install line, timings, any errors/fixes).
+> **Status: VERIFIED (2026-08-11).** v1 ran end-to-end on Kaggle: 620 steps /
+> 1 epoch, ~2h34m, final train loss **0.6514**, model pushed to
+> `Shaurya-saini/qwen2.5-coder-7b-apps-qlora`. Real timings and the two bugs hit
+> are in "Verified run" at the bottom.
 
 The real QLoRA fine-tune runs on **Kaggle Notebooks** (free, supports background
 execution so it keeps running after you close the tab). Colab is only for the
@@ -99,6 +101,36 @@ After success you should see, on huggingface.co/Shaurya-saini:
 - [ ] Training logs loss; checkpoints appear in `outputs/`.
 - [ ] Merged model + adapter visible on the Hub under `Shaurya-saini/…`.
 
-## Timings / pitfalls (fill in after the real run)
+## Verified run (2026-08-11)
 
-- _(record wall-clock, step throughput, VRAM, and any errors + fixes here)_
+Workflow used: cloned the GitHub repo into `/kaggle/working`, `git pull` for
+fixes, `%pip install -q unsloth`, HF token via `kaggle_secrets`.
+
+- **Data:** `python data/prepare_apps.py` → `data/apps_train.jsonl` from the full
+  APPS **train** split (5000 problems, 1 solution each).
+- **Training:** `--epochs 1 --batch-size 2 --grad-accum 4 --save-steps 50
+  --save-total-limit 3 --push --merge-16bit`. **620 steps**, **~2h34m**
+  (~11 s/step), final `train_loss = 0.6514`, single T4 used (`Num GPUs = 1`).
+- **Output:** merged 16-bit `Shaurya-saini/qwen2.5-coder-7b-apps-qlora` +
+  adapter `…-lora`. The merge/upload tail took the expected ~20 min.
+
+### Bugs hit and fixed (both now in the code)
+
+1. **`ValueError: Exceeds the limit (4300 digits) for integer string conversion`**
+   during `prepare_apps.py`. Cause: Python 3.12's int-string guard vs. APPS test
+   cases with thousands-of-digits integers. Fix: `json.loads(raw, parse_int=str)`
+   in `_safe_json` (we only read `fn_name`, never the values as ints).
+2. **`TypeError: unsloth_push_to_hub() takes 2 positional arguments...`** at the
+   push step — *after training had fully completed*. Cause: Unsloth's
+   `push_to_hub` takes only the repo id positionally, not the tokenizer. Fix:
+   push the tokenizer with its own `tokenizer.push_to_hub(...)` call. **Recovery
+   without retraining:** the adapter was already saved to `outputs/final_adapter`,
+   so we just re-ran the corrected push (model/tokenizer still in memory).
+
+### Pitfalls / notes
+
+- The push is the *last* step and runs after ~2.5h of training — a bug there
+  wastes the whole session if you can't recover. The saved `outputs/final_adapter`
+  is the safety net; you can reload it and push without retraining.
+- Unsloth (free) uses **one** GPU even on T4 x2 — pick T4 x2 anyway (avoids P100,
+  gives compute capability 7.5); timings above are single-GPU.

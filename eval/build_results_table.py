@@ -78,11 +78,118 @@ def build_table(records, columns, benchmark) -> list[str]:
     return lines
 
 
+# --- Diagram generation ------------------------------------------------------
+# Categorical palette slots 1..6 from the data-viz reference palette (light
+# surface). Validated CVD-safe as a set (worst adjacent ΔE 21.6, well over the
+# >=12 target). Slots 2/3 sit below 3:1 contrast on the light surface, so the
+# "relief rule" applies -- we draw a value label on every bar, which also just
+# makes the chart easier to read.
+CATEGORICAL = ["#2a78d6", "#1baf7a", "#eda100", "#008300", "#4a3aa7", "#e34948"]
+INK, SECONDARY, MUTED = "#0b0b0b", "#52514e", "#898781"
+GRID, BASELINE, SURFACE = "#e1e0d9", "#c3c2b7", "#fcfcfb"
+
+
+def _primary_value(entries: list[dict]):
+    """The single pass@k value a bar shows: prefer pass@1, else the smallest k."""
+    if not entries:
+        return None
+    picks = [e for e in entries if e.get("k") == 1] or sorted(
+        entries, key=lambda e: e.get("k", 1))
+    val = picks[0].get("pass_at_k")
+    return val if isinstance(val, (int, float)) else None
+
+
+def render_charts(records, columns, benchmarks, figures_dir):
+    """One grouped bar chart per benchmark: pass@1 by difficulty tier, one bar
+    per model column. Returns {benchmark: png_path}. Degrades gracefully (and
+    non-fatally) if matplotlib isn't installed -- the table still builds."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # headless: works on Kaggle/Colab with no display
+        import matplotlib.pyplot as plt
+    except Exception as e:  # noqa: BLE001 - charts are optional, never fatal
+        print(f"matplotlib unavailable ({e}); skipping charts "
+              f"(`pip install matplotlib` to enable).")
+        return {}
+
+    os.makedirs(figures_dir, exist_ok=True)
+    made: dict[str, str] = {}
+
+    for bench in benchmarks:
+        recs = [r for r in records if r.get("benchmark") == bench]
+        tiers = [t for t in TIER_ORDER if any(r.get("tier") == t for r in recs)]
+        cols = [c for c in columns if any(r.get("model") == c["key"] for r in recs)]
+        if not tiers or not cols:
+            continue
+
+        cell = defaultdict(list)
+        for r in recs:
+            cell[(r.get("tier"), r.get("model"))].append(r)
+
+        n = len(cols)
+        group_w = 0.8
+        bar_w = group_w / n
+        x = list(range(len(tiers)))
+
+        fig, ax = plt.subplots(figsize=(1.9 * len(tiers) + 2.4, 4.4), dpi=200)
+        fig.patch.set_facecolor(SURFACE)
+        ax.set_facecolor(SURFACE)
+
+        top = 1.0
+        for i, c in enumerate(cols):
+            centers = [xi - group_w / 2 + bar_w * (i + 0.5) for xi in x]
+            vals = [_primary_value(cell.get((t, c["key"]), [])) for t in tiers]
+            heights = [v if v is not None else 0 for v in vals]
+            top = max([top] + [h for h in heights])
+            bars = ax.bar(centers, heights, width=bar_w * 0.86,
+                          color=CATEGORICAL[i % len(CATEGORICAL)],
+                          label=c["label"], zorder=3)
+            for rect, v in zip(bars, vals):
+                if v is None:
+                    continue
+                ax.annotate(f"{v:.1f}",
+                            (rect.get_x() + rect.get_width() / 2, rect.get_height()),
+                            xytext=(0, 3), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=8, color=INK)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([TIER_LABELS.get(t, t) for t in tiers],
+                           fontsize=9, color=INK)
+        ax.set_ylabel("pass@1 (%)", fontsize=9, color=SECONDARY)
+        ax.set_ylim(0, top * 1.18)
+        ax.set_title(f"{BENCH_LABELS.get(bench, bench)} — pass@1 by difficulty",
+                     fontsize=11, color=INK, pad=10)
+
+        # Recessive chrome: drop the box, hairline y-grid behind the bars.
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(BASELINE)
+        ax.tick_params(colors=MUTED, length=0)
+        ax.yaxis.grid(True, color=GRID, linewidth=1, zorder=0)
+        ax.set_axisbelow(True)
+        # Legend always present for >=2 series (identity never color-alone).
+        ax.legend(frameon=False, fontsize=8.5, ncol=min(n, 3),
+                  loc="upper center", bbox_to_anchor=(0.5, -0.12), labelcolor=INK)
+
+        path = os.path.join(figures_dir, f"{bench}_pass_at_1.png")
+        fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        made[bench] = path
+        print(f"Wrote {path}")
+
+    return made
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scores", default=os.path.join("results", "scores.json"))
     ap.add_argument("--out", default=os.path.join("results", "report.md"))
+    ap.add_argument("--figures-dir", default=os.path.join("results", "figures"),
+                    help="Where the generated chart PNGs are written.")
+    ap.add_argument("--no-charts", action="store_true",
+                    help="Skip diagram generation (table only).")
     args = ap.parse_args()
 
     if not os.path.exists(args.scores):
@@ -99,11 +206,19 @@ def main() -> None:
         if r["benchmark"] not in benchmarks:
             benchmarks.append(r["benchmark"])
 
+    charts = {} if args.no_charts else render_charts(
+        records, columns, benchmarks, args.figures_dir)
+
     out = ["# Results — difficulty-stratified pass@k", ""]
     if data.get("notes"):
         out += [data["notes"], ""]
     for bench in benchmarks:
         out += build_table(records, columns, bench)
+        if bench in charts:
+            rel = os.path.relpath(charts[bench],
+                                  os.path.dirname(os.path.abspath(args.out)))
+            rel = rel.replace(os.sep, "/")  # forward slashes render everywhere
+            out += [f"![{BENCH_LABELS.get(bench, bench)} — pass@1 by difficulty]({rel})", ""]
 
     out += [
         "---",

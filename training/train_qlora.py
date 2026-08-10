@@ -204,7 +204,11 @@ def main() -> None:
                              "See setup/02_kaggle_training.md.")
         repo = f"{args.hf_username}/{args.hf_repo}"
         print(f"Pushing LoRA adapter -> {repo}-lora")
-        model.push_to_hub(f"{repo}-lora", tokenizer, token=token)
+        # Unsloth's patched push_to_hub takes only the repo id positionally, so
+        # the tokenizer must be pushed with its own call. (push_to_hub_merged
+        # below is different -- it does accept the tokenizer positionally.)
+        model.push_to_hub(f"{repo}-lora", token=token)
+        tokenizer.push_to_hub(f"{repo}-lora", token=token)
         if args.merge_16bit:
             print(f"Pushing merged 16-bit model -> {repo}")
             model.push_to_hub_merged(repo, tokenizer,

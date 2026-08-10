@@ -6,13 +6,15 @@ Operating rules: [`CLAUDE.md`](./CLAUDE.md).
 
 **Status legend:** ⬜ Not started · 🟨 In progress · ✅ Done · ⏭️ Skipped/optional
 
-> **Current phase: Phase 3 — Real training run on Kaggle (T4 x2).** Phase 2
-> **complete**: the self-contained `setup/colab_smoketest.ipynb` ran end-to-end
-> on a free Colab T4 (2026-08-10) — 4-bit load, LoRA attach (0.53% trainable),
-> APPS-train Parquet load, 20 steps (loss ≈ 0.63), valid generation, and an
-> optional merged-16bit HF push all succeeded. Stack: Unsloth 2026.8.11 /
-> transformers 5.5.0 / torch 2.11.0 / datasets ≥ 4.0. **Next:** run the real
-> QLoRA fine-tune (v1) on Kaggle via `setup/02_kaggle_training.md`.
+> **Current phase: Phase 5 — Evaluation environment.** Phases 3 & 4
+> **complete**: v1 QLoRA fine-tune ran on Kaggle (2026-08-11) — 620 steps / 1
+> epoch, ~2h34m, final train loss **0.6514** — and the merged 16-bit model is
+> live at **`Shaurya-saini/qwen2.5-coder-7b-apps-qlora`** (+ `-lora` adapter).
+> Two run-time bugs found & fixed: Py3.12 giant-int JSON limit in
+> `prepare_apps.py`, and Unsloth's `push_to_hub` tokenizer-arg signature in
+> `train_qlora.py`. `build_results_table.py` now also **generates a grouped-bar
+> diagram per benchmark** (pass@1 by tier) embedded in the report. **Next:**
+> stand up the clean eval env and run base + fine-tuned through both benchmarks.
 
 ---
 
@@ -23,11 +25,11 @@ Operating rules: [`CLAUDE.md`](./CLAUDE.md).
 | 0 | Scaffold + first setup doc | Repo structure, dependency lists, `setup/01_colab_smoketest.md` | ✅ | README, requirements-{data,train,eval}.txt, setup doc (DRAFT, verify after Phase 2) |
 | 1 | Data pipeline | `data/prepare_apps.py`, `data/prepare_livecodebench.py` (download only) | 🟨 | Both scripts written + compile + `--help` OK. Not yet run on real data (write-only mode). Separation guardrails baked in. |
 | 2 | Smoke test on Colab | Verified tiny end-to-end run; `setup/colab_smoketest.ipynb` | ✅ | Full pass on Colab T4 (2026-08-10): load→LoRA→APPS Parquet→20 steps (loss 0.63)→generate→HF push. Doc finalized w/ real results |
-| 3 | Real training run + second setup doc | `training/train_qlora.py`, `setup/02_kaggle_training.md`, trained adapter | 🟨 | Script + Kaggle doc ready and smoke-validated. **User action:** run v1 fine-tune on Kaggle T4 x2 |
-| 4 | Push to Hugging Face Hub | Merged fine-tuned model on HF Hub | 🟨 | Built into `train_qlora.py --push --merge-16bit` → `Shaurya-saini/qwen2.5-coder-7b-apps-qlora`. Needs `HF_TOKEN` + a real run |
+| 3 | Real training run + second setup doc | `training/train_qlora.py`, `setup/02_kaggle_training.md`, trained adapter | ✅ | v1 done on Kaggle (2026-08-11): 620 steps/1 epoch, ~2h34m, loss 0.6514. Two bugs fixed mid-run (giant-int JSON, push_to_hub signature) |
+| 4 | Push to Hugging Face Hub | Merged fine-tuned model on HF Hub | ✅ | Live: `Shaurya-saini/qwen2.5-coder-7b-apps-qlora` (merged 16-bit) + `…-lora` (adapter) |
 | 5 | Evaluation setup + third setup doc | `setup/03_evaluation_environment.md`, `eval/*.sh` | 🟨 | Both harness wrapper scripts + eval-env doc (DRAFT) written. Not yet run |
 | 6 | Run the evals | `eval/run_apps_eval.sh`, `eval/run_livecodebench_eval.sh` outputs | ⬜ | **User action:** base + fine-tuned, both benchmarks, all tiers; spot-check ~20–30 via API |
-| 7 | Results + write-up | `eval/build_results_table.py`, `results/report.md`, `README.md` | 🟨 | Table builder written + tested on template; `scores.template.json` + `report.md` placeholder in place. Fills once real numbers exist |
+| 7 | Results + write-up | `eval/build_results_table.py`, `results/report.md`, `README.md` | 🟨 | Table builder + **auto-generated per-benchmark bar diagrams** (pass@1 by tier) tested end-to-end on demo data. Fills once real numbers exist |
 | 8 | Optional: live demo doc | `setup/04_hf_spaces_demo.md`, `demo/` Gradio app | ⏭️ | Only after core comparison works |
 | 9 | Optional stretch | Cross-family/larger-model row in table | ⏭️ | Only if time/budget remains |
 
@@ -46,9 +48,9 @@ Operating rules: [`CLAUDE.md`](./CLAUDE.md).
 - [x] `training/train_qlora.py` _(written + compiles; not yet run on GPU)_
 - [x] `eval/run_apps_eval.sh` _(written; not yet run)_
 - [x] `eval/run_livecodebench_eval.sh` _(written; not yet run)_
-- [x] `eval/build_results_table.py` _(written + tested on template)_
+- [x] `eval/build_results_table.py` _(table + per-benchmark bar diagrams; tested end-to-end)_
 - [x] `results/scores.template.json` + `results/report.md` placeholder
-- [ ] Fine-tuned model pushed to Hugging Face Hub _(needs real Kaggle run)_
+- [x] Fine-tuned model pushed to Hugging Face Hub _(`Shaurya-saini/qwen2.5-coder-7b-apps-qlora`)_
 - [ ] `results/report.md` with the completed results table _(needs real numbers)_
 - [ ] `README.md` results section filled in _(Phase 7)_
 - [ ] `demo/` Gradio app (optional)
@@ -93,6 +95,25 @@ Operating rules: [`CLAUDE.md`](./CLAUDE.md).
 - **APPS test split:** the existing `codeparrot/apps` `test` split IS the internal
   held-out set — bigcode-evaluation-harness evaluates on it directly; we do not
   re-slice the train split.
+
+### Session decisions (2026-08-11)
+
+- **v1 training run (done):** full APPS train, 1 solution/problem, seq len 2048,
+  1 epoch, batch 2 × grad-accum 4. 620 steps, ~2h34m, final loss **0.6514** on
+  Kaggle single-T4 (Unsloth used 1 of the 2 GPUs, as expected).
+- **Bug fix — Py3.12 int-string limit:** some APPS `input_output` test cases hold
+  integers with thousands of digits; `json.loads` hit the 4300-digit guard. Fixed
+  in `prepare_apps.py` with `json.loads(raw, parse_int=str)` (we only read
+  `fn_name`, never the values as ints).
+- **Bug fix — Unsloth `push_to_hub` signature:** it takes only the repo id
+  positionally, not the tokenizer. `train_qlora.py` now pushes the tokenizer with
+  its own `tokenizer.push_to_hub(...)` call (`push_to_hub_merged` still takes the
+  tokenizer positionally — unchanged).
+- **Results diagrams:** `build_results_table.py` now renders one grouped-bar chart
+  per benchmark (pass@1 by difficulty tier, base/finetuned/frontier) to
+  `results/figures/` and embeds them in `report.md`. CVD-safe categorical palette
+  (validated), value labels on every bar, degrades gracefully if matplotlib is
+  absent. `matplotlib>=3.7` added to `requirements-eval.txt`.
 
 ## Open questions / blockers
 
