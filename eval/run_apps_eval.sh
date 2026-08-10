@@ -16,6 +16,13 @@
 # under results/apps/<label>/.
 set -euo pipefail
 
+# bigcode-evaluation-harness loads codeparrot/apps via its loading SCRIPT and does
+# NOT pass trust_remote_code. On datasets >= 4.0 scripts are gone entirely (the
+# eval env must pin datasets < 4.0 -- see setup/03); on datasets 2.16..3.x a
+# script needs trust to run, which this env var grants without editing the
+# harness. Harmless on older datasets.
+export HF_DATASETS_TRUST_REMOTE_CODE=1
+
 MODEL="${MODEL:?set MODEL to an HF model id}"
 LABEL="${LABEL:?set LABEL, e.g. base | finetuned}"
 N_SAMPLES="${N_SAMPLES:-1}"           # 1 -> pass@1; raise (e.g. 20) for pass@k

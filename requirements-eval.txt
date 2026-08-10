@@ -8,7 +8,11 @@
 # Each brings its own pinned requirements; let those govern. The packages below
 # are the minimal extras commonly needed to load/serve the HF model for eval.
 # See setup/03_evaluation_environment.md for the verified, end-to-end steps.
-datasets>=2.16.0
+# datasets MUST stay < 4.0 here: bigcode-evaluation-harness loads codeparrot/apps
+# via its loading script, which datasets 4.0 removed. (The TRAINING env is the
+# opposite — it needs datasets >= 4.0 for Unsloth. The two envs are separate.)
+# Pin this LAST, after the harness's own requirements, so nothing re-upgrades it.
+datasets>=2.16.0,<4.0
 huggingface_hub>=0.23.0
 transformers>=4.44.0
 accelerate>=0.30.0

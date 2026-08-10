@@ -28,7 +28,19 @@ pip install -r requirements-eval.txt   # datasets, transformers, accelerate, ...
 git clone https://github.com/bigcode-project/bigcode-evaluation-harness
 cd bigcode-evaluation-harness
 pip install -e .
+pip install -r requirements.txt
+# CRITICAL, run LAST: the harness loads codeparrot/apps via its loading SCRIPT,
+# which datasets >= 4.0 removed. Pin below 4.0 AFTER every other install so
+# nothing upgrades it back:
+pip install "datasets>=2.16,<4.0"
 ```
+
+> The harness calls `load_dataset("codeparrot/apps", name=<tier>)` with **no**
+> `trust_remote_code`. Two things make that work: `datasets < 4.0` (scripts still
+> exist) and `HF_DATASETS_TRUST_REMOTE_CODE=1` (grants script trust without
+> editing the harness) — `run_apps_eval.sh` exports the env var for you. Without
+> the pin you get `AttributeError: 'APPS' object has no attribute 'dataset'` (the
+> dataset load failed silently, then the task tried to use it).
 
 Sanity-check the exact APPS task names for your version (hyphen vs underscore):
 
@@ -104,7 +116,16 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
 - [ ] LiveCodeBench results produced for base **and** finetuned; release recorded.
 - [ ] `results/report.md` generated with real numbers.
 
-## Pitfalls (fill in after the real run)
+## Pitfalls seen
 
-- _(APPS task-name spelling, lcb_runner custom-model registration, OOM at long
-  generations, timeout tuning — record what actually happened)_
+- **2026-08-11 — `AttributeError: 'APPS' object has no attribute 'dataset'`**
+  (after a clean model load). Root cause: `datasets >= 4.0` in the env, so the
+  harness's script-based `codeparrot/apps` load failed (swallowed as a warning),
+  leaving `self.dataset` unset. Fix: `pip install "datasets>=2.16,<4.0"` as the
+  final install step; `run_apps_eval.sh` already exports
+  `HF_DATASETS_TRUST_REMOTE_CODE=1`. Then re-run — no kernel restart needed
+  (the harness runs in a fresh subprocess via `accelerate launch`).
+- **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the
+  env before running for higher rate limits / faster downloads. Not fatal.
+- _(still to record: APPS task-name spelling confirmed by `main.py --help`,
+  lcb_runner custom-model registration, OOM at long generations, timeout tuning)_
