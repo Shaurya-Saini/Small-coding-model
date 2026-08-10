@@ -1,0 +1,15 @@
+# Evaluation environment — install FRESH, in a notebook/venv SEPARATE from the
+# training env (SCM.md §3). Mixing Unsloth and the eval tools in one environment
+# invites hard-to-debug version conflicts.
+#
+# The two eval tools are installed from source, not from PyPI:
+#   * bigcode-evaluation-harness (APPS):  git clone + pip install -e .
+#   * LiveCodeBench lcb_runner:           git clone + follow its README
+# Each brings its own pinned requirements; let those govern. The packages below
+# are the minimal extras commonly needed to load/serve the HF model for eval.
+# See setup/03_evaluation_environment.md for the verified, end-to-end steps.
+datasets>=2.16.0
+huggingface_hub>=0.23.0
+transformers>=4.44.0
+accelerate>=0.30.0
+# vllm            # optional — much faster batched generation for pass@k with k>1

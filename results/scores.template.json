@@ -1,0 +1,27 @@
+{
+  "_comment": "Copy to results/scores.json and fill from your OWN eval runs. Numbers below are illustrative placeholders (0.0), not real. 'pass_at_k' is a percentage. 'source' is 'our-eval' for cells you produced, 'cited' for published leaderboard numbers (frontier column only).",
+  "notes": "Base = un-tuned Qwen2.5-Coder-7B-Instruct. Fine-tuned = QLoRA on APPS train. Frontier = published LiveCodeBench leaderboard (same split).",
+  "model_columns": [
+    { "key": "base",      "label": "Base (Qwen2.5-Coder-7B-Instruct)" },
+    { "key": "finetuned", "label": "Fine-tuned (ours)" },
+    { "key": "frontier",  "label": "Frontier (published)" }
+  ],
+  "records": [
+    { "benchmark": "apps", "model": "base",      "tier": "easy",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "apps", "model": "finetuned", "tier": "easy",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "apps", "model": "base",      "tier": "medium", "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "apps", "model": "finetuned", "tier": "medium", "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "apps", "model": "base",      "tier": "hard",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "apps", "model": "finetuned", "tier": "hard",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+
+    { "benchmark": "livecodebench", "model": "base",      "tier": "easy",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "livecodebench", "model": "finetuned", "tier": "easy",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "livecodebench", "model": "frontier",  "tier": "easy",   "k": 1, "pass_at_k": 0.0, "source": "cited" },
+    { "benchmark": "livecodebench", "model": "base",      "tier": "medium", "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "livecodebench", "model": "finetuned", "tier": "medium", "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "livecodebench", "model": "frontier",  "tier": "medium", "k": 1, "pass_at_k": 0.0, "source": "cited" },
+    { "benchmark": "livecodebench", "model": "base",      "tier": "hard",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "livecodebench", "model": "finetuned", "tier": "hard",   "k": 1, "pass_at_k": 0.0, "n_problems": 0, "source": "our-eval" },
+    { "benchmark": "livecodebench", "model": "frontier",  "tier": "hard",   "k": 1, "pass_at_k": 0.0, "source": "cited" }
+  ]
+}
