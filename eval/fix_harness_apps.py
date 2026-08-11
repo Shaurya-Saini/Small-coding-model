@@ -1,21 +1,23 @@
 #!/usr/bin/env python
 """
-fix_harness_apps.py -- patch a bug in bigcode-evaluation-harness's APPS task.
+fix_harness_apps.py -- patch two problems in bigcode-evaluation-harness's APPS task
+(bigcode_eval/tasks/apps.py). Both are applied idempotently.
 
-`bigcode_eval/tasks/apps.py::process_results` references a local `level` before
-it is assigned:
+1) BUG: `process_results` references a local `level` before assignment:
+       if level is None:                 # <-- UnboundLocalError at scoring time
+           level = self.DATASET_NAME
+   `compute(...)` already passes `level=self.DATASET_NAME`, so this dead block only
+   crashes. We delete it.
 
-    def process_results(self, generations, references):
-        code_metric = load("codeparrot/apps_metric")
-        if level is None:                 # <-- UnboundLocalError at scoring time
-            level = self.DATASET_NAME
-        results = code_metric.compute(
-            predictions=generations, k_list=self.k_list, level=self.DATASET_NAME
-        )
-
-The `compute(...)` call already passes `level=self.DATASET_NAME`, so the two-line
-`if level is None:` block is dead code that only crashes. We delete it. Idempotent:
-once removed, re-running is a no-op.
+2) OUTPUT CLEANUP: the harness's default eos is `<|endoftext|>`, but a Qwen chat
+   model ends its turn with `<|im_end|>`. That token therefore leaks into the
+   generated code, which then fails to compile (SyntaxError) -> every problem
+   scores as a "compile error". We override `postprocess_generation` to:
+     * keep the original `split("\nANSWER:")` behavior,
+     * cut everything from the first `<|im_end|>` / `<|endoftext|>`,
+     * if the model wrapped code in a markdown fence (the base instruct model
+       tends to), extract the fenced block.
+   Overriding on `GeneralAPPS` covers `APPS` (which subclasses it).
 
 Usage:
     python eval/fix_harness_apps.py --apps-file <harness>/bigcode_eval/tasks/apps.py
@@ -30,6 +32,34 @@ import sys
 BUGGY = re.compile(
     r"[ \t]*if level is None:[ \t]*\n[ \t]*level[ \t]*=[ \t]*self\.DATASET_NAME[ \t]*\n"
 )
+
+OVERRIDE_MARKER = "# --- SCM postprocess override ---"
+# Appended to the module AFTER the classes are defined. Note: this text is written
+# verbatim into apps.py, so backslashes are doubled here to land as single ones.
+OVERRIDE = '''
+
+# --- SCM postprocess override ---
+# Strip chat end-markers (and extract fenced code) so instruct-model output is
+# valid Python before scoring. See eval/fix_harness_apps.py for the why.
+import re as _scm_re
+
+
+def _scm_postprocess_generation(self, generation, idx):
+    try:
+        generation = generation.split("\\nANSWER:", 1)[1]
+    except IndexError:
+        pass
+    for _tok in ("<|im_end|>", "<|endoftext|>"):
+        generation = generation.split(_tok)[0]
+    _fence = _scm_re.search(r"```(?:python|py)?\\s*\\n?(.*?)```", generation, _scm_re.DOTALL)
+    if _fence:
+        generation = _fence.group(1)
+    return generation
+
+
+GeneralAPPS.postprocess_generation = _scm_postprocess_generation
+# --- end SCM postprocess override ---
+'''
 
 
 def main() -> int:
@@ -46,14 +76,23 @@ def main() -> int:
         print(f"apps.py not found: {args.apps_file}")
         return 1
 
-    new, n = BUGGY.subn("", src)
-    if n == 0:
-        print(f"No buggy `level` block found (already patched?): {args.apps_file}")
+    changed = []
+
+    src, n_bug = BUGGY.subn("", src)
+    if n_bug:
+        changed.append("removed buggy `level` block")
+
+    if OVERRIDE_MARKER not in src:
+        src = src.rstrip("\n") + "\n" + OVERRIDE
+        changed.append("added postprocess override (strip <|im_end|> / fences)")
+
+    if not changed:
+        print(f"Already patched (no changes): {args.apps_file}")
         return 0
 
     with open(args.apps_file, "w", encoding="utf-8") as fh:
-        fh.write(new)
-    print(f"Patched harness apps.py (removed {n} buggy `level` block): {args.apps_file}")
+        fh.write(src)
+    print(f"Patched harness apps.py [{'; '.join(changed)}]: {args.apps_file}")
     return 0
 
 

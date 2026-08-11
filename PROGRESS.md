@@ -138,6 +138,12 @@ bleeding-edge defaults broke it four ways in a row. Baked into
 - **Harness APPS bug patched** via `eval/fix_harness_apps.py` (auto-run): upstream
   `apps.py::process_results` references an undefined `level` → `UnboundLocalError`
   at scoring; the dead block is removed.
+- **Output cleanup (critical for real numbers):** same patch overrides
+  `postprocess_generation` to strip the Qwen `<|im_end|>` turn marker (the harness
+  eos is `<|endoftext|>`, so `<|im_end|>` leaked into the code → 100% compile
+  errors → false 0.0) and to extract a markdown code block if present. Full
+  pipeline runs end-to-end (2026-08-11); re-running smoke to get true numbers.
+  Model outputs **raw code** (fine-tuning worked), not markdown.
 - **Eval in 4-bit** (`LOAD_IN=4bit`): a 7B in 16-bit OOMs a 16 GB T4
   (`CUBLAS_STATUS_ALLOC_FAILED`). Base + fine-tuned both 4-bit for a fair compare.
 - **Single-GPU is the safe default** (`NUM_PROCESSES=1`): clean tracebacks;

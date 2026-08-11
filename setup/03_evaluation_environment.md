@@ -211,6 +211,14 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   `level=self.DATASET_NAME`. Fix: `eval/fix_harness_apps.py` deletes the block;
   **`run_apps_eval.sh` applies it automatically** (path derived from
   `HARNESS_MAIN`).
+- **2026-08-11 — 100% "compile errors", `avg_accuracy 0.0`, `runtime errors 0`.**
+  NOT a model-quality result. The fine-tuned model emits raw code ending in the
+  Qwen turn marker `<|im_end|>`, but the harness's eos is `<|endoftext|>`, so
+  `<|im_end|>` leaks into the code and every `compile()` throws `SyntaxError`.
+  Fix: `fix_harness_apps.py` also overrides `postprocess_generation` to cut at
+  `<|im_end|>`/`<|endoftext|>` (and extract a markdown code block if present, for
+  the base instruct model). Auto-applied by `run_apps_eval.sh`. **Diagnose any
+  future 0.0 by dumping a generation** (`repr(gens[0][0])`) before trusting it.
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the
