@@ -224,6 +224,16 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
      the same template, so the comparison stays fair.
   **Diagnose any future 0.0 by dumping generations** (`print(gens[i][0])`) — 100%
   *compile* errors means a format/extraction issue, not model quality.
+- **2026-08-11 — generation ~45 s/problem after chat-templating.** With the chat
+  prompt the model generates to `max_length` because the harness eos is
+  `<|endoftext|>`, which a Qwen chat model rarely emits (it ends turns with
+  `<|im_end|>`). Fix: the wrapper now passes `--eos "<|im_end|>"` (env `EOS`), so
+  generation stops at the end of the answer (~5–10× faster). The full 5000-problem
+  APPS test set is still too slow for one session — **evaluate a stratified subset**
+  (`LIMIT=100`–`200` per tier) for v1 and report n per tier; raise later if needed.
+- **Verify which model you ran:** the metrics JSON's `config.model` records it.
+  Run each of base and fine-tuned with a *distinct* `LABEL`, and confirm
+  `config.model` matches before trusting a comparison.
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the

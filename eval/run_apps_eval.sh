@@ -56,6 +56,10 @@ TEMPERATURE="${TEMPERATURE:-0.2}"     # use ~0.6-0.8 when N_SAMPLES>1
 MAX_GEN_LEN="${MAX_GEN_LEN:-2048}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 PRECISION="${PRECISION:-fp16}"        # T4 has no bf16 -> fp16 (ignored when quantized)
+EOS="${EOS:-<|im_end|>}"              # Qwen chat turn-end. Without this the harness eos
+                                      # is <|endoftext|> (rarely emitted in chat), so
+                                      # generation runs to max_length every time (~10x
+                                      # slower). Stopping at <|im_end|> ends at the answer.
 LOAD_IN="${LOAD_IN:-4bit}"            # 4bit | 8bit | none. A 7B in 16-bit (~15GB) OOMs a
                                       # 16GB T4 (CUBLAS_STATUS_ALLOC_FAILED); 4-bit (~4.5GB)
                                       # leaves room to generate. Each GPU gets its own replica.
@@ -111,6 +115,7 @@ for TASK in "${TASKS[@]}"; do
     --max_length_generation "${MAX_GEN_LEN}" \
     --batch_size "${BATCH_SIZE}" \
     --precision "${PRECISION}" \
+    --eos "${EOS}" \
     "${QUANT_FLAG[@]}" \
     "${LIMIT_FLAG[@]}" \
     --allow_code_execution \

@@ -6,7 +6,14 @@ Operating rules: [`CLAUDE.md`](./CLAUDE.md).
 
 **Status legend:** ⬜ Not started · 🟨 In progress · ✅ Done · ⏭️ Skipped/optional
 
-> **Current phase: Phase 5 — Evaluation environment.** Phases 3 & 4
+> **Phase 5 essentially working (2026-08-11):** after a long chain of eval-env
+> fixes (see the dependency-pins block below), the APPS harness runs end-to-end and
+> produces sane numbers once the prompt is chat-templated to match training
+> (compile errors 9→0–2 per tier). Speed fixed with `--eos "<|im_end|>"`. **Next:**
+> run base + fine-tuned on a stratified **subset** (`LIMIT≈100–200`/tier) with
+> distinct labels, fill `results/scores.json`, build the table+diagrams.
+>
+> **Current phase: Phase 5/6 — Evaluation.** Phases 3 & 4
 > **complete**: v1 QLoRA fine-tune ran on Kaggle (2026-08-11) — 620 steps / 1
 > epoch, ~2h34m, final train loss **0.6514** — and the merged 16-bit model is
 > live at **`Shaurya-saini/qwen2.5-coder-7b-apps-qlora`** (+ `-lora` adapter).
