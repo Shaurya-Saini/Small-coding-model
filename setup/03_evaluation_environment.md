@@ -64,6 +64,15 @@ No Docker in notebooks (SCM.md §5) — the harness's per-problem timeout stays 
 so a runaway generation can't hang the run. Metrics land in
 `results/apps/<label>/<task>_metrics.json`.
 
+**Precision / VRAM:** the wrapper defaults to `LOAD_IN=4bit`. A 7B model in
+16-bit (~15 GB) does **not** leave a 16 GB T4 room to generate — you get
+`CUBLAS_STATUS_ALLOC_FAILED` (an OOM). 4-bit weights (~4.5 GB) fit with room, and
+with T4 x2 each GPU holds its own replica (2× throughput). Evaluate **base and
+fine-tuned identically** (both 4-bit) so the before/after is apples-to-apples —
+this is also the realistic way a 7B gets deployed locally. Record it in the
+report. Knobs: `LOAD_IN=8bit|none`, `NUM_PROCESSES=1` (force single-GPU),
+`LIMIT=10` (quick sanity pass on 10 problems before the full multi-hour run).
+
 ## Step 2 — LiveCodeBench via lcb_runner
 
 ```bash
@@ -125,7 +134,14 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   final install step; `run_apps_eval.sh` already exports
   `HF_DATASETS_TRUST_REMOTE_CODE=1`. Then re-run — no kernel restart needed
   (the harness runs in a fresh subprocess via `accelerate launch`).
+- **2026-08-11 — `RuntimeError: CUDA error: CUBLAS_STATUS_ALLOC_FAILED` at the
+  first forward pass**, after a clean model load. This is OOM: the harness loaded
+  the 7B in 16-bit (~15 GB) on a 16 GB T4, leaving nothing for the KV-cache. Fix:
+  `LOAD_IN=4bit` (now the wrapper default). With T4 x2 the harness places one
+  full 4-bit replica per GPU (`device_map={"": process_index}`), so both GPUs are
+  used and it fits.
+- **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
+  harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the
   env before running for higher rate limits / faster downloads. Not fatal.
-- _(still to record: APPS task-name spelling confirmed by `main.py --help`,
-  lcb_runner custom-model registration, OOM at long generations, timeout tuning)_
+- _(still to record: lcb_runner custom-model registration, timeout tuning)_

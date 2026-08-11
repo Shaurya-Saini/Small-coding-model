@@ -29,8 +29,28 @@ N_SAMPLES="${N_SAMPLES:-1}"           # 1 -> pass@1; raise (e.g. 20) for pass@k
 TEMPERATURE="${TEMPERATURE:-0.2}"     # use ~0.6-0.8 when N_SAMPLES>1
 MAX_GEN_LEN="${MAX_GEN_LEN:-2048}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
-PRECISION="${PRECISION:-bf16}"
+PRECISION="${PRECISION:-fp16}"        # T4 has no bf16 -> fp16 (ignored when quantized)
+LOAD_IN="${LOAD_IN:-4bit}"            # 4bit | 8bit | none. A 7B in 16-bit (~15GB) OOMs a
+                                      # 16GB T4 (CUBLAS_STATUS_ALLOC_FAILED); 4-bit (~4.5GB)
+                                      # leaves room to generate. Each GPU gets its own replica.
+NUM_PROCESSES="${NUM_PROCESSES:-}"    # blank = auto (all GPUs). Set 1 to force single-GPU.
+LIMIT="${LIMIT:-}"                    # blank = full tier. Set e.g. 10 for a quick sanity pass.
 HARNESS_MAIN="${HARNESS_MAIN:-main.py}"   # path to bigcode-evaluation-harness/main.py
+
+# 7B in 16-bit does not fit a T4 with room to generate -> quantize for eval.
+QUANT_FLAG=()
+case "${LOAD_IN}" in
+  4bit) QUANT_FLAG=(--load_in_4bit) ;;
+  8bit) QUANT_FLAG=(--load_in_8bit) ;;
+  none) QUANT_FLAG=() ;;
+  *) echo "LOAD_IN must be one of: 4bit | 8bit | none" >&2; exit 1 ;;
+esac
+
+# Optional accelerate launch args (force single-GPU) and problem-count cap.
+LAUNCH_ARGS=()
+[ -n "${NUM_PROCESSES}" ] && LAUNCH_ARGS=(--num_processes "${NUM_PROCESSES}")
+LIMIT_FLAG=()
+[ -n "${LIMIT}" ] && LIMIT_FLAG=(--limit "${LIMIT}")
 
 # APPS difficulty-specific task names. VERIFY against `python $HARNESS_MAIN --help`
 # (older/newer harness versions have used hyphens vs underscores).
@@ -40,8 +60,8 @@ OUT_DIR="results/apps/${LABEL}"
 mkdir -p "${OUT_DIR}"
 
 for TASK in "${TASKS[@]}"; do
-  echo "=== ${LABEL} :: ${TASK} :: n_samples=${N_SAMPLES} ==="
-  accelerate launch "${HARNESS_MAIN}" \
+  echo "=== ${LABEL} :: ${TASK} :: n_samples=${N_SAMPLES} :: load_in=${LOAD_IN} ${LIMIT:+:: limit=${LIMIT}} ==="
+  accelerate launch "${LAUNCH_ARGS[@]}" "${HARNESS_MAIN}" \
     --model "${MODEL}" \
     --tasks "${TASK}" \
     --n_samples "${N_SAMPLES}" \
@@ -49,6 +69,8 @@ for TASK in "${TASKS[@]}"; do
     --max_length_generation "${MAX_GEN_LEN}" \
     --batch_size "${BATCH_SIZE}" \
     --precision "${PRECISION}" \
+    "${QUANT_FLAG[@]}" \
+    "${LIMIT_FLAG[@]}" \
     --allow_code_execution \
     --save_generations \
     --save_generations_path "${OUT_DIR}/${TASK}_generations.json" \

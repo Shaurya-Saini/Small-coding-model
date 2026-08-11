@@ -227,8 +227,10 @@ def main() -> None:
         "- Only cells sourced from our own eval pipeline are unmarked; *(cited)* "
         "cells are published leaderboard numbers for the same split.",
         "- The hard/competition-tier gap is reported as-is, not downplayed.",
-        "- pass@k settings (k, samples, temperature) are recorded per run in the "
-        "`results/apps/` and `results/livecodebench/` metrics files.",
+        "- Our 7B is evaluated **4-bit quantized** (base and fine-tuned identically), "
+        "the realistic local-deploy setting; frontier numbers are full-precision API.",
+        "- pass@k settings (k, samples, temperature, precision) are recorded per run "
+        "in the `results/apps/` and `results/livecodebench/` metrics files.",
         "",
     ]
 
