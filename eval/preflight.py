@@ -107,6 +107,21 @@ def main() -> int:
     else:
         _ok(f"accelerate {av}.")
 
+    # --- pyext (APPS scorer dep) must import on this Python -------------------
+    # pyext uses inspect.getargspec, removed in Python 3.11 -> crashes SCORING.
+    try:
+        import pyext  # noqa: F401
+        _ok("pyext importable (APPS scorer dependency).")
+    except AttributeError as e:
+        _fail(f"pyext import failed: {e}",
+              "python eval/fix_pyext_py312.py  (restores inspect.getargspec on 3.11+)")
+        problems += 1
+    except ModuleNotFoundError:
+        # Not fatal here: the harness pulls it in with the metric; note it.
+        print(f"{YELLOW}[NOTE]{RESET} pyext not installed yet; the harness will "
+              "fetch it. If scoring later errors on getargspec, run "
+              "eval/fix_pyext_py312.py.")
+
     print()
     if problems:
         print(f"{RED}Preflight FAILED with {problems} problem(s). "

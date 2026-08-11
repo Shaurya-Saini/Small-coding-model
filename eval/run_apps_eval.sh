@@ -42,6 +42,13 @@ else
   echo "      Kaggle Secret into os.environ before running this cell." >&2
 fi
 
+# One-time Python 3.11+ compat: the APPS scorer's `pyext` dependency uses
+# inspect.getargspec (removed in 3.11), which otherwise crashes the SCORING step
+# after generation has already finished. Patch it idempotently before we start.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python "${SCRIPT_DIR}/fix_pyext_py312.py" || \
+  echo "WARN: pyext patch step failed; APPS scoring may crash at the end." >&2
+
 MODEL="${MODEL:?set MODEL to an HF model id}"
 LABEL="${LABEL:?set LABEL, e.g. base | finetuned}"
 N_SAMPLES="${N_SAMPLES:-1}"           # 1 -> pass@1; raise (e.g. 20) for pass@k

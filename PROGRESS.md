@@ -131,6 +131,10 @@ bleeding-edge defaults broke it four ways in a row. Baked into
   push saved special tokens as a transformers-5 `extra_special_tokens` list; 4.x
   needs `additional_special_tokens` (→ `'list' object has no attribute 'keys'`).
   Base model unaffected.
+- **`pyext` patched for Python 3.12** via `eval/fix_pyext_py312.py` (auto-run by
+  `run_apps_eval.sh`): the APPS scorer's `pyext` dep uses `inspect.getargspec`,
+  removed in 3.11 (→ crash at scoring). Generation itself works (~5.8 s/problem,
+  single-T4 4-bit).
 - **Eval in 4-bit** (`LOAD_IN=4bit`): a 7B in 16-bit OOMs a 16 GB T4
   (`CUBLAS_STATUS_ALLOC_FAILED`). Base + fine-tuned both 4-bit for a fair compare.
 - **Single-GPU is the safe default** (`NUM_PROCESSES=1`): clean tracebacks;

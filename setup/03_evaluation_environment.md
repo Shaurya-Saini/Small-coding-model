@@ -196,6 +196,14 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   Fix: `eval/fix_tokenizer_config.py --repo <finetuned>` renames it to
   `additional_special_tokens` (matches the base model; loads on 4.x and 5.x).
   transformers issue #45376. The base model is unaffected.
+- **2026-08-11 — `AttributeError: module 'inspect' has no attribute
+  'getargspec'`** at the **scoring** step (generation for all 10 problems
+  succeeded first). Cause: the APPS scorer (`codeparrot/apps_metric`) imports
+  `pyext`, which uses `inspect.getargspec` — removed in Python 3.11; Kaggle runs
+  3.12. Fix: `eval/fix_pyext_py312.py` prepends a `getargspec` shim to the
+  installed `pyext` (idempotent). **`run_apps_eval.sh` now runs this
+  automatically** before each launch; `preflight.py` also checks it. Same issue
+  as FlagOpen/TACO #3.
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the
