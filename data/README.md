@@ -1,7 +1,7 @@
 # data/ — dataset preparation
 
 Two scripts, kept **deliberately separate** so training and evaluation data can
-never mix (see `CLAUDE.md` rules #1 and #2).
+never mix.
 
 | Script | Dataset | Purpose | Feeds training? |
 |---|---|---|---|
@@ -15,7 +15,7 @@ bigcode-evaluation-harness runs directly against the APPS test split in Phase 6.
 ## Run (data-prep env only — CPU, no GPU)
 
 ```bash
-pip install -r ../requirements-data.txt
+pip install -r ../requirements/data.txt
 
 # Training corpus (APPS train split -> data/apps_train.jsonl)
 python prepare_apps.py

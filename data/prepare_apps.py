@@ -3,7 +3,7 @@
 prepare_apps.py -- Download the APPS dataset and format the TRAIN split into
 prompt->solution pairs for QLoRA supervised fine-tuning.
 
-NON-NEGOTIABLE RULES (see CLAUDE.md / SCM.md):
+NON-NEGOTIABLE RULES (see CLAUDE.md):
   * TRAIN split only is written here. The APPS TEST split is NEVER written to a
     training file -- it is left untouched for the internal held-out eval, which
     bigcode-evaluation-harness runs directly against the APPS test split.

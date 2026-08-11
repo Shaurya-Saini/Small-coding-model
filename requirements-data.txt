@@ -1,5 +1,0 @@
-# Data-prep environment (runs anywhere — CPU only, no GPU needed).
-# Used by data/prepare_apps.py and data/prepare_livecodebench.py.
-#   pip install -r requirements-data.txt
-datasets>=2.16.0
-huggingface_hub>=0.23.0

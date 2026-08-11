@@ -18,14 +18,14 @@ set -euo pipefail
 
 MODEL="${MODEL:?set MODEL to an HF model id}"
 LABEL="${LABEL:?set LABEL, e.g. base | finetuned}"
-RELEASE="${RELEASE:-release_v5}"      # MUST match the version recorded in PROGRESS.md
+RELEASE="${RELEASE:-release_v5}"      # MUST match the version recorded in CLAUDE.md
 N_SAMPLES="${N_SAMPLES:-1}"           # 1 -> pass@1
 BACKEND="${BACKEND:-vllm}"            # vllm (fast) or hf
 
 OUT_DIR="results/livecodebench/${LABEL}"
 mkdir -p "${OUT_DIR}"
 
-# NOTE (finalize in setup/03_evaluation_environment.md): a custom HF model must
+# NOTE (finalize in setup.md): a custom HF model must
 # be registered with lcb_runner. Depending on the lcb_runner version this is
 # either adding an entry to lcb_runner/lm_styles.py or passing a local/custom
 # model flag. Confirm the exact flag before the real run.

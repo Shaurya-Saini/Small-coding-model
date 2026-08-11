@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # run_apps_eval.sh -- pass@k on the APPS TEST split via bigcode-evaluation-harness,
 # stratified by difficulty tier. Run this in the CLEAN eval environment (never
-# the training env -- see SCM.md §3), after `pip install -e .` inside
+# the training env -- see CLAUDE.md), after `pip install -e .` inside
 # bigcode-evaluation-harness.
 #
 # APPS ships its own hidden test cases; the harness executes generated code
 # against them and reports pass@k. We keep the per-problem timeout on (Docker
-# sandbox is unavailable in notebooks -- SCM.md §5).
+# sandbox is unavailable in notebooks -- see CLAUDE.md).
 #
 # Usage:
 #   MODEL=Shaurya-saini/qwen2.5-coder-7b-apps-qlora LABEL=finetuned ./run_apps_eval.sh
@@ -18,7 +18,7 @@ set -euo pipefail
 
 # bigcode-evaluation-harness loads codeparrot/apps via its loading SCRIPT and does
 # NOT pass trust_remote_code. On datasets >= 4.0 scripts are gone entirely (the
-# eval env must pin datasets < 4.0 -- see setup/03); on datasets 2.16..3.x a
+# eval env must pin datasets < 4.0 -- see setup.md); on datasets 2.16..3.x a
 # script needs trust to run, which this env var grants without editing the
 # harness. Harmless on older datasets.
 export HF_DATASETS_TRUST_REMOTE_CODE=1

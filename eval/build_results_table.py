@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-build_results_table.py -- assemble the difficulty-stratified pass@k table
-(SCM.md §7) from a single normalized scores file, and write results/report.md.
+build_results_table.py -- assemble the difficulty-stratified pass@k table from a
+single normalized scores file, and write results/report.md.
 
 Why a normalized file: bigcode-evaluation-harness and lcb_runner emit different
 JSON shapes that also drift across versions. Rather than parse both here, we read
@@ -27,11 +27,19 @@ TIER_LABELS = {
     "medium": "Medium / Interview",
     "hard": "Hard / Competition",
 }
-BENCH_LABELS = {"apps": "APPS (held-out test)", "livecodebench": "LiveCodeBench"}
+BENCH_LABELS = {
+    "apps": "APPS — pass@1 (strict accuracy)",
+    "apps_avg": "APPS — average test-case pass rate",
+    "livecodebench": "LiveCodeBench — pass@1",
+}
+# Metric per benchmark: controls how a cell is formatted and the chart's y-axis.
+BENCH_METRIC = {"apps": "pass@1", "apps_avg": "avg", "livecodebench": "pass@1"}
+METRIC_YLABEL = {"pass@1": "pass@1 (%)", "avg": "test-case pass rate (%)"}
 
 
-def fmt_cell(entries: list[dict]) -> str:
-    """entries: list of {k, pass_at_k, source}. -> 'pass@1 12.3 · pass@10 25.0'."""
+def fmt_cell(entries: list[dict], metric: str = "pass@1") -> str:
+    """entries: list of {k, pass_at_k, source}. For pass@1 -> 'pass@1 12.3';
+    for the 'avg' metric (average test-case pass rate) -> just '12.3'."""
     if not entries:
         return "—"
     entries = sorted(entries, key=lambda e: e.get("k", 1))
@@ -40,7 +48,7 @@ def fmt_cell(entries: list[dict]) -> str:
     for e in entries:
         val = e.get("pass_at_k")
         val_s = f"{val:.1f}" if isinstance(val, (int, float)) else str(val)
-        parts.append(f"pass@{e.get('k', 1)} {val_s}")
+        parts.append(f"pass@{e.get('k', 1)} {val_s}" if metric == "pass@1" else val_s)
         cited = cited or (e.get("source") == "cited")
     text = " · ".join(parts)
     return text + " *(cited)*" if cited else text
@@ -62,13 +70,14 @@ def build_table(records, columns, benchmark) -> list[str]:
     if not tiers:
         return []
 
+    metric = BENCH_METRIC.get(benchmark, "pass@1")
     header = "| Difficulty | " + " | ".join(c["label"] for c in columns) + " |"
     sep = "|" + "---|" * (len(columns) + 1)
     lines = [f"### {BENCH_LABELS.get(benchmark, benchmark)}", "", header, sep]
     for tier in tiers:
         row = [TIER_LABELS.get(tier, tier)]
         for c in columns:
-            row.append(fmt_cell(cell.get((tier, c["key"]), [])))
+            row.append(fmt_cell(cell.get((tier, c["key"]), []), metric))
         lines.append("| " + " | ".join(row) + " |")
     # footnote with n_problems per tier if present
     if n_problems:
@@ -152,12 +161,13 @@ def render_charts(records, columns, benchmarks, figures_dir):
                             xytext=(0, 3), textcoords="offset points",
                             ha="center", va="bottom", fontsize=8, color=INK)
 
+        metric = BENCH_METRIC.get(bench, "pass@1")
         ax.set_xticks(x)
         ax.set_xticklabels([TIER_LABELS.get(t, t) for t in tiers],
                            fontsize=9, color=INK)
-        ax.set_ylabel("pass@1 (%)", fontsize=9, color=SECONDARY)
+        ax.set_ylabel(METRIC_YLABEL.get(metric, "%"), fontsize=9, color=SECONDARY)
         ax.set_ylim(0, top * 1.18)
-        ax.set_title(f"{BENCH_LABELS.get(bench, bench)} — pass@1 by difficulty",
+        ax.set_title(f"{BENCH_LABELS.get(bench, bench)}",
                      fontsize=11, color=INK, pad=10)
 
         # Recessive chrome: drop the box, hairline y-grid behind the bars.
@@ -172,7 +182,7 @@ def render_charts(records, columns, benchmarks, figures_dir):
         ax.legend(frameon=False, fontsize=8.5, ncol=min(n, 3),
                   loc="upper center", bbox_to_anchor=(0.5, -0.12), labelcolor=INK)
 
-        path = os.path.join(figures_dir, f"{bench}_pass_at_1.png")
+        path = os.path.join(figures_dir, f"{bench}.png")
         fig.savefig(path, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
         made[bench] = path
@@ -209,7 +219,7 @@ def main() -> None:
     charts = {} if args.no_charts else render_charts(
         records, columns, benchmarks, args.figures_dir)
 
-    out = ["# Results — difficulty-stratified pass@k", ""]
+    out = ["# Results — difficulty-stratified evaluation", ""]
     if data.get("notes"):
         out += [data["notes"], ""]
     for bench in benchmarks:
@@ -218,12 +228,12 @@ def main() -> None:
             rel = os.path.relpath(charts[bench],
                                   os.path.dirname(os.path.abspath(args.out)))
             rel = rel.replace(os.sep, "/")  # forward slashes render everywhere
-            out += [f"![{BENCH_LABELS.get(bench, bench)} — pass@1 by difficulty]({rel})", ""]
+            out += [f"![{BENCH_LABELS.get(bench, bench)}]({rel})", ""]
 
     out += [
         "---",
         "",
-        "**Honesty notes (SCM.md §7, §10):**",
+        "**Honesty notes:**",
         "- Only cells sourced from our own eval pipeline are unmarked; *(cited)* "
         "cells are published leaderboard numbers for the same split.",
         "- The hard/competition-tier gap is reported as-is, not downplayed.",

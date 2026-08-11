@@ -23,7 +23,7 @@ point --data at APPS-test or LiveCodeBench.
 
 Auth for --push: set env var HF_TOKEN to a *write* token. In a notebook:
     from huggingface_hub import login; login(token=HF_TOKEN)   # or os.environ
-See setup/02_kaggle_training.md for the exact secret-loading cell.
+See setup.md (Training) for the exact secret-loading cell.
 """
 from __future__ import annotations
 
@@ -201,7 +201,7 @@ def main() -> None:
         token = os.environ.get("HF_TOKEN")
         if not token:
             raise SystemExit("--push requires env var HF_TOKEN (write role). "
-                             "See setup/02_kaggle_training.md.")
+                             "See setup.md (Training).")
         repo = f"{args.hf_username}/{args.hf_repo}"
         print(f"Pushing LoRA adapter -> {repo}-lora")
         # Unsloth's patched push_to_hub takes only the repo id positionally, so

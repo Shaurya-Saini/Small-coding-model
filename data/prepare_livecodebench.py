@@ -4,7 +4,7 @@ prepare_livecodebench.py -- Download LiveCodeBench and record a manifest.
 
 ============================================================================
  LIVECODEBENCH IS EVALUATION-ONLY. IT IS NEVER FED INTO TRAINING. EVER.
- (See CLAUDE.md rule #1 and SCM.md §2/§5.)
+ (See CLAUDE.md rule #1.)
 ============================================================================
 
 Because of that rule, this script deliberately does NOT emit prompt->solution
@@ -35,7 +35,7 @@ from collections import Counter
 # lighter to download. Versions are exposed via the `version_tag` config.
 LCB_DATASET = "livecodebench/code_generation_lite"
 
-# NOTE: pick the LATEST stable release and RECORD it in PROGRESS.md -- the score
+# NOTE: pick the LATEST stable release and RECORD it in CLAUDE.md -- the score
 # is only comparable against leaderboard numbers for the *same* version. Verify
 # the newest available tag when you actually run this (release_v6, ... may exist).
 DEFAULT_VERSION = "release_v5"
@@ -65,7 +65,7 @@ def load_lcb_test(version: str):
     if version not in configs:
         raise RuntimeError(
             f"Version config '{version}' not in the Parquet export. "
-            f"Available: {configs}. Pick one of these (and record it in PROGRESS.md).")
+            f"Available: {configs}. Pick one of these (and record it in CLAUDE.md).")
 
     sel = [f for f in files if f.startswith(version + "/")]
     data_files = [f"hf://datasets/{LCB_DATASET}@{rev}/{f}" for f in sel]
@@ -119,7 +119,7 @@ def main() -> None:
     print("\nDone.")
     print(f"  difficulty counts : {dict(tier_counts)}")
     print(f"  manifest written  : {manifest_path}")
-    print(f"  RECORD THIS in PROGRESS.md -> evaluated version_tag = {args.version}")
+    print(f"  RECORD THIS in CLAUDE.md -> evaluated version_tag = {args.version}")
 
 
 if __name__ == "__main__":
