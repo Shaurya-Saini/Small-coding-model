@@ -211,14 +211,19 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   `level=self.DATASET_NAME`. Fix: `eval/fix_harness_apps.py` deletes the block;
   **`run_apps_eval.sh` applies it automatically** (path derived from
   `HARNESS_MAIN`).
-- **2026-08-11 — 100% "compile errors", `avg_accuracy 0.0`, `runtime errors 0`.**
-  NOT a model-quality result. The fine-tuned model emits raw code ending in the
-  Qwen turn marker `<|im_end|>`, but the harness's eos is `<|endoftext|>`, so
-  `<|im_end|>` leaks into the code and every `compile()` throws `SyntaxError`.
-  Fix: `fix_harness_apps.py` also overrides `postprocess_generation` to cut at
-  `<|im_end|>`/`<|endoftext|>` (and extract a markdown code block if present, for
-  the base instruct model). Auto-applied by `run_apps_eval.sh`. **Diagnose any
-  future 0.0 by dumping a generation** (`repr(gens[0][0])`) before trusting it.
+- **2026-08-11 — 100% "compile errors", `avg_accuracy 0.0`.** Two layered causes,
+  both handled by `fix_harness_apps.py` (auto-applied by `run_apps_eval.sh`):
+  1. The Qwen turn marker `<|im_end|>` leaked into the code (harness eos is
+     `<|endoftext|>`). → postprocess strips it. This alone only went 10→9 errors.
+  2. **Prompt-format mismatch (the real one):** the model was fine-tuned INSIDE
+     Qwen's chat template, but the harness feeds a bare `QUESTION:/ANSWER:` string.
+     Off-distribution, the model produced systematically broken code (an extra `)`
+     on nearly every line). → we override `get_prompt` to rebuild the exact
+     training prompt (chat template + system + `<|im_start|>assistant` cue) and
+     `postprocess_generation` to extract the assistant turn. The base model uses
+     the same template, so the comparison stays fair.
+  **Diagnose any future 0.0 by dumping generations** (`print(gens[i][0])`) — 100%
+  *compile* errors means a format/extraction issue, not model quality.
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the
