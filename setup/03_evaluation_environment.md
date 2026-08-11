@@ -60,6 +60,19 @@ Sanity-check the exact APPS task names for your version (hyphen vs underscore):
 python main.py --help 2>/dev/null | grep -i apps || true
 ```
 
+**One-time: repair the fine-tuned model's tokenizer for transformers 4.x.** The
+training push (Unsloth + transformers 5.x) saved the special tokens as a v5-style
+`extra_special_tokens` **list**, which transformers 4.x can't parse
+(`AttributeError: 'list' object has no attribute 'keys'`). Rename it to the
+4.x-native `additional_special_tokens` (the base model already uses that form, so
+it needs no repair):
+
+```bash
+# needs HF_TOKEN (write) in env; edits the Hub repo once. --dry-run to preview.
+python /path/to/SCM/eval/fix_tokenizer_config.py \
+  --repo Shaurya-saini/qwen2.5-coder-7b-apps-qlora
+```
+
 Then run the harness wrapper for each model (from the repo root that has `main.py`).
 **Always do a `LIMIT=10` smoke first** (single-GPU by default — one clean traceback
 if anything's wrong), then the full run, then switch to `NUM_PROCESSES=2` for ~2×:
@@ -176,6 +189,13 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   real error in `ChildFailedError` across both ranks. The wrapper now defaults to
   `NUM_PROCESSES=1` so failures show as a single clean traceback; opt into
   `NUM_PROCESSES=2` for speed once a run is known-good.
+- **2026-08-11 — `AttributeError: 'list' object has no attribute 'keys'` in
+  `_set_model_specific_special_tokens`** while loading the **fine-tuned**
+  tokenizer (model loaded fine first). Cause: the push saved special tokens as a
+  transformers-5 `extra_special_tokens` list; transformers 4.x wants a dict.
+  Fix: `eval/fix_tokenizer_config.py --repo <finetuned>` renames it to
+  `additional_special_tokens` (matches the base model; loads on 4.x and 5.x).
+  transformers issue #45376. The base model is unaffected.
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the

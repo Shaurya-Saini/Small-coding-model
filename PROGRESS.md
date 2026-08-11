@@ -127,6 +127,10 @@ bleeding-edge defaults broke it four ways in a row. Baked into
 - `transformers < 5.0` — 5.0 removed the `load_in_4bit` kwarg the harness passes
   → `TypeError: ... unexpected keyword argument 'load_in_4bit'`.
 - `bitsandbytes` installed — 4-bit kernels; missing → `PackageNotFoundError`.
+- **Fine-tuned tokenizer repaired once** via `eval/fix_tokenizer_config.py`: the
+  push saved special tokens as a transformers-5 `extra_special_tokens` list; 4.x
+  needs `additional_special_tokens` (→ `'list' object has no attribute 'keys'`).
+  Base model unaffected.
 - **Eval in 4-bit** (`LOAD_IN=4bit`): a 7B in 16-bit OOMs a 16 GB T4
   (`CUBLAS_STATUS_ALLOC_FAILED`). Base + fine-tuned both 4-bit for a fair compare.
 - **Single-GPU is the safe default** (`NUM_PROCESSES=1`): clean tracebacks;
