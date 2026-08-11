@@ -115,13 +115,30 @@ Operating rules: [`CLAUDE.md`](./CLAUDE.md).
   (validated), value labels on every bar, degrades gracefully if matplotlib is
   absent. `matplotlib>=3.7` added to `requirements-eval.txt`.
 
+### Eval-environment dependency pins (2026-08-11) — hard-won, keep them
+
+The clean eval env (bigcode-evaluation-harness) needs a specific stack; Kaggle's
+bleeding-edge defaults broke it four ways in a row. Baked into
+`requirements-eval.txt`, `eval/run_apps_eval.sh`, and `eval/preflight.py`:
+
+- `datasets < 4.0` — 4.0 removed loading scripts → `AttributeError: 'APPS' object
+  has no attribute 'dataset'`. Plus `HF_DATASETS_TRUST_REMOTE_CODE=1` (script
+  needs trust; harness doesn't pass it).
+- `transformers < 5.0` — 5.0 removed the `load_in_4bit` kwarg the harness passes
+  → `TypeError: ... unexpected keyword argument 'load_in_4bit'`.
+- `bitsandbytes` installed — 4-bit kernels; missing → `PackageNotFoundError`.
+- **Eval in 4-bit** (`LOAD_IN=4bit`): a 7B in 16-bit OOMs a 16 GB T4
+  (`CUBLAS_STATUS_ALLOC_FAILED`). Base + fine-tuned both 4-bit for a fair compare.
+- **Single-GPU is the safe default** (`NUM_PROCESSES=1`): clean tracebacks;
+  `NUM_PROCESSES=2` for ~2× once a run is verified.
+- **APPS task names use hyphens** (`apps-introductory`) — confirmed by the harness.
+- Always run `eval/preflight.py` and a `LIMIT=10` smoke before a full run.
+
 ## Open questions / blockers
 
 - **LiveCodeBench version_tag** to evaluate on — scripts default to `release_v5`;
   confirm the latest stable tag when first run and record the chosen version here
   (leaderboard numbers are version-specific).
-- **APPS task-name spelling** in the installed bigcode-evaluation-harness
-  (`apps-introductory` vs `apps_introductory`) — verify before the eval run.
 - **lcb_runner custom-model registration** — exact mechanism for a non-registry
   HF model varies by version; confirm during eval setup.
 

@@ -22,6 +22,10 @@ set -euo pipefail
 # script needs trust to run, which this env var grants without editing the
 # harness. Harmless on older datasets.
 export HF_DATASETS_TRUST_REMOTE_CODE=1
+# The APPS metric executes generated code; the harness gates that behind both the
+# --allow_code_execution flag AND this env var on some versions. Set it here so a
+# multi-hour generation run doesn't fail at the very end on the scoring step.
+export HF_ALLOW_CODE_EVAL=1
 
 # Pass the HF token through to the harness subprocess for authenticated (faster,
 # higher-rate-limit, private-repo-capable) downloads. Load it in the notebook
@@ -48,7 +52,10 @@ PRECISION="${PRECISION:-fp16}"        # T4 has no bf16 -> fp16 (ignored when qua
 LOAD_IN="${LOAD_IN:-4bit}"            # 4bit | 8bit | none. A 7B in 16-bit (~15GB) OOMs a
                                       # 16GB T4 (CUBLAS_STATUS_ALLOC_FAILED); 4-bit (~4.5GB)
                                       # leaves room to generate. Each GPU gets its own replica.
-NUM_PROCESSES="${NUM_PROCESSES:-}"    # blank = auto (all GPUs). Set 1 to force single-GPU.
+NUM_PROCESSES="${NUM_PROCESSES:-1}"   # SAFE default: single GPU. One clean traceback on
+                                      # error (no ChildFailedError across ranks), and a
+                                      # 4-bit 7B fits one T4. Set 2 for ~2x on T4 x2 once a
+                                      # LIMIT=10 smoke has passed; set "" (blank) for auto.
 LIMIT="${LIMIT:-}"                    # blank = full tier. Set e.g. 10 for a quick sanity pass.
 HARNESS_MAIN="${HARNESS_MAIN:-main.py}"   # path to bigcode-evaluation-harness/main.py
 

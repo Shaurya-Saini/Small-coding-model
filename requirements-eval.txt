@@ -20,5 +20,9 @@ huggingface_hub>=0.23.0
 # `TypeError: ... unexpected keyword argument 'load_in_4bit'`. Pin LAST.
 transformers>=4.44,<5.0
 accelerate>=0.30.0
+# bitsandbytes provides the 4-bit/8-bit kernels the harness needs for LOAD_IN=4bit.
+# Missing it -> "PackageNotFoundError: No package metadata was found for bitsandbytes".
+# It reads its CUDA version from torch, so it matches the installed torch build.
+bitsandbytes>=0.43.0
 matplotlib>=3.7.0   # results diagrams (eval/build_results_table.py)
 # vllm            # optional — much faster batched generation for pass@k with k>1

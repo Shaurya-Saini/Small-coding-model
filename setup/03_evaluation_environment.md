@@ -29,13 +29,22 @@ git clone https://github.com/bigcode-project/bigcode-evaluation-harness
 cd bigcode-evaluation-harness
 pip install -e .
 pip install -r requirements.txt
-# CRITICAL, run LAST — two version pins the harness needs (run AFTER every other
-# install so nothing upgrades them back):
-#   * datasets < 4.0  : the harness loads codeparrot/apps via its loading SCRIPT,
-#                       which datasets 4.0 removed.
-#   * transformers < 5.0 : the harness passes `load_in_4bit=True` straight to
-#                       from_pretrained, a kwarg transformers 5.0 removed.
-pip install "datasets>=2.16,<4.0" "transformers>=4.44,<5.0"
+# CRITICAL, run LAST — the deps the harness needs, installed AFTER everything else
+# so nothing upgrades them back:
+#   * datasets < 4.0     : harness loads codeparrot/apps via its loading SCRIPT,
+#                          which datasets 4.0 removed.
+#   * transformers < 5.0 : harness passes `load_in_4bit=True` straight to
+#                          from_pretrained, a kwarg transformers 5.0 removed.
+#   * bitsandbytes       : provides the 4-bit kernels; missing it ->
+#                          "PackageNotFoundError: ... bitsandbytes".
+pip install "datasets>=2.16,<4.0" "transformers>=4.44,<5.0" bitsandbytes
+```
+
+**Preflight — always run this before the harness** (fails in seconds on any
+version/dep problem, instead of crashing 90s into a model download):
+
+```bash
+python /path/to/SCM/eval/preflight.py   # want: "Preflight PASSED"
 ```
 
 > The harness calls `load_dataset("codeparrot/apps", name=<tier>)` with **no**
@@ -51,16 +60,26 @@ Sanity-check the exact APPS task names for your version (hyphen vs underscore):
 python main.py --help 2>/dev/null | grep -i apps || true
 ```
 
-Then run the harness wrapper for each model (from the repo root that has `main.py`):
+Then run the harness wrapper for each model (from the repo root that has `main.py`).
+**Always do a `LIMIT=10` smoke first** (single-GPU by default — one clean traceback
+if anything's wrong), then the full run, then switch to `NUM_PROCESSES=2` for ~2×:
 
 ```bash
-# fine-tuned
+# 1) 10-problem smoke (fast; proves the whole loop end-to-end)
+LIMIT=10 MODEL=Shaurya-saini/qwen2.5-coder-7b-apps-qlora LABEL=finetuned_smoke \
+  HARNESS_MAIN=$(pwd)/main.py  bash /path/to/SCM/eval/run_apps_eval.sh
+
+# 2) full fine-tuned run (add NUM_PROCESSES=2 to use both T4s once the smoke passes)
 MODEL=Shaurya-saini/qwen2.5-coder-7b-apps-qlora LABEL=finetuned \
   HARNESS_MAIN=$(pwd)/main.py  bash /path/to/SCM/eval/run_apps_eval.sh
-# base
+# 3) full base run (the before/after baseline)
 MODEL=Qwen/Qwen2.5-Coder-7B-Instruct LABEL=base \
   HARNESS_MAIN=$(pwd)/main.py  bash /path/to/SCM/eval/run_apps_eval.sh
 ```
+
+Defaults are the **safe** ones: `LOAD_IN=4bit`, `NUM_PROCESSES=1` (single GPU).
+Knobs: `NUM_PROCESSES=2` (both T4s, ~2×), `NUM_PROCESSES=""` (accelerate auto),
+`LOAD_IN=8bit|none`, `LIMIT=N`.
 
 `--allow_code_execution` runs generated code against APPS's real hidden tests.
 No Docker in notebooks (SCM.md §5) — the harness's per-problem timeout stays on
@@ -148,6 +167,15 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   `load_in_4bit` kwarg (now needs `BitsAndBytesConfig`), but the harness still
   passes it. Fix: pin `transformers>=4.44,<5.0` in the eval env (re-run the bash
   cell after; the harness runs in a fresh subprocess, no kernel restart needed).
+- **2026-08-11 — `PackageNotFoundError: No package metadata was found for
+  bitsandbytes`.** Cause: 4-bit needs `bitsandbytes`, which the clean eval env
+  never installed (training got it via Unsloth). Fix: `pip install bitsandbytes`
+  (now in `requirements-eval.txt`; `eval/preflight.py` catches it up front). See
+  transformers issue #25210.
+- **Multi-GPU noise:** `accelerate launch` auto-ran 2 processes and wrapped the
+  real error in `ChildFailedError` across both ranks. The wrapper now defaults to
+  `NUM_PROCESSES=1` so failures show as a single clean traceback; opt into
+  `NUM_PROCESSES=2` for speed once a run is known-good.
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the
