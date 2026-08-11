@@ -14,7 +14,11 @@
 # Pin this LAST, after the harness's own requirements, so nothing re-upgrades it.
 datasets>=2.16.0,<4.0
 huggingface_hub>=0.23.0
-transformers>=4.44.0
+# transformers MUST stay on the 4.x line here: bigcode-evaluation-harness passes
+# `load_in_4bit=True` directly to from_pretrained, a kwarg transformers 5.0
+# removed (5.x wants BitsAndBytesConfig). On 5.x you get
+# `TypeError: ... unexpected keyword argument 'load_in_4bit'`. Pin LAST.
+transformers>=4.44,<5.0
 accelerate>=0.30.0
 matplotlib>=3.7.0   # results diagrams (eval/build_results_table.py)
 # vllm            # optional — much faster batched generation for pass@k with k>1

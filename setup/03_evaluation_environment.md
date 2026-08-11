@@ -29,10 +29,13 @@ git clone https://github.com/bigcode-project/bigcode-evaluation-harness
 cd bigcode-evaluation-harness
 pip install -e .
 pip install -r requirements.txt
-# CRITICAL, run LAST: the harness loads codeparrot/apps via its loading SCRIPT,
-# which datasets >= 4.0 removed. Pin below 4.0 AFTER every other install so
-# nothing upgrades it back:
-pip install "datasets>=2.16,<4.0"
+# CRITICAL, run LAST — two version pins the harness needs (run AFTER every other
+# install so nothing upgrades them back):
+#   * datasets < 4.0  : the harness loads codeparrot/apps via its loading SCRIPT,
+#                       which datasets 4.0 removed.
+#   * transformers < 5.0 : the harness passes `load_in_4bit=True` straight to
+#                       from_pretrained, a kwarg transformers 5.0 removed.
+pip install "datasets>=2.16,<4.0" "transformers>=4.44,<5.0"
 ```
 
 > The harness calls `load_dataset("codeparrot/apps", name=<tier>)` with **no**
@@ -140,6 +143,11 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   `LOAD_IN=4bit` (now the wrapper default). With T4 x2 the harness places one
   full 4-bit replica per GPU (`device_map={"": process_index}`), so both GPUs are
   used and it fits.
+- **2026-08-11 — `TypeError: Qwen2ForCausalLM.__init__() got an unexpected
+  keyword argument 'load_in_4bit'`.** Cause: transformers 5.x removed the direct
+  `load_in_4bit` kwarg (now needs `BitsAndBytesConfig`), but the harness still
+  passes it. Fix: pin `transformers>=4.44,<5.0` in the eval env (re-run the bash
+  cell after; the harness runs in a fresh subprocess, no kernel restart needed).
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the

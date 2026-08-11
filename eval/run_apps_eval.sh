@@ -23,6 +23,21 @@ set -euo pipefail
 # harness. Harmless on older datasets.
 export HF_DATASETS_TRUST_REMOTE_CODE=1
 
+# Pass the HF token through to the harness subprocess for authenticated (faster,
+# higher-rate-limit, private-repo-capable) downloads. Load it in the notebook
+# first, e.g.:
+#   from kaggle_secrets import UserSecretsClient
+#   os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
+# A plain `!bash ...` cell inherits os.environ, so HF_TOKEN set that way is seen.
+if [ -n "${HF_TOKEN:-}" ]; then
+  export HF_TOKEN
+  export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}"   # some versions read this name
+  echo "HF auth: HF_TOKEN is set."
+else
+  echo "WARN: HF_TOKEN not in env -> unauthenticated downloads (slower). Load the" >&2
+  echo "      Kaggle Secret into os.environ before running this cell." >&2
+fi
+
 MODEL="${MODEL:?set MODEL to an HF model id}"
 LABEL="${LABEL:?set LABEL, e.g. base | finetuned}"
 N_SAMPLES="${N_SAMPLES:-1}"           # 1 -> pass@1; raise (e.g. 20) for pass@k
