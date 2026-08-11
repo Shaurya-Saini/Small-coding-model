@@ -204,6 +204,13 @@ embedded in `report.md`. Add `--no-charts` for a table-only build.
   installed `pyext` (idempotent). **`run_apps_eval.sh` now runs this
   automatically** before each launch; `preflight.py` also checks it. Same issue
   as FlagOpen/TACO #3.
+- **2026-08-11 — `UnboundLocalError: cannot access local variable 'level'`** in
+  the harness's `bigcode_eval/tasks/apps.py::process_results` (scoring step).
+  It's an upstream bug: a dead `if level is None: level = self.DATASET_NAME`
+  block references `level` before assignment, while `compute()` already passes
+  `level=self.DATASET_NAME`. Fix: `eval/fix_harness_apps.py` deletes the block;
+  **`run_apps_eval.sh` applies it automatically** (path derived from
+  `HARNESS_MAIN`).
 - **APPS task-name spelling: confirmed `apps-introductory` (hyphen)** — the
   harness accepted it (`Selected Tasks: ['apps-introductory']`).
 - **Unauthenticated HF requests warning** — set `HF_TOKEN` (Kaggle Secret) in the

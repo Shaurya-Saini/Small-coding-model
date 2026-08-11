@@ -66,6 +66,19 @@ NUM_PROCESSES="${NUM_PROCESSES:-1}"   # SAFE default: single GPU. One clean trac
 LIMIT="${LIMIT:-}"                    # blank = full tier. Set e.g. 10 for a quick sanity pass.
 HARNESS_MAIN="${HARNESS_MAIN:-main.py}"   # path to bigcode-evaluation-harness/main.py
 
+# Patch a bug in the harness's own APPS task: process_results() references an
+# undefined local `level` -> UnboundLocalError at scoring. Idempotent; the harness
+# dir is derived from HARNESS_MAIN.
+if HARNESS_DIR="$(cd "$(dirname "${HARNESS_MAIN}")" 2>/dev/null && pwd)"; then
+  APPS_TASK="${HARNESS_DIR}/bigcode_eval/tasks/apps.py"
+  if [ -f "${APPS_TASK}" ]; then
+    python "${SCRIPT_DIR}/fix_harness_apps.py" --apps-file "${APPS_TASK}" || \
+      echo "WARN: harness apps.py patch step failed." >&2
+  else
+    echo "WARN: harness apps.py not found at ${APPS_TASK}; skipping its patch." >&2
+  fi
+fi
+
 # 7B in 16-bit does not fit a T4 with room to generate -> quantize for eval.
 QUANT_FLAG=()
 case "${LOAD_IN}" in

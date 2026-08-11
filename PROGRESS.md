@@ -135,6 +135,9 @@ bleeding-edge defaults broke it four ways in a row. Baked into
   `run_apps_eval.sh`): the APPS scorer's `pyext` dep uses `inspect.getargspec`,
   removed in 3.11 (→ crash at scoring). Generation itself works (~5.8 s/problem,
   single-T4 4-bit).
+- **Harness APPS bug patched** via `eval/fix_harness_apps.py` (auto-run): upstream
+  `apps.py::process_results` references an undefined `level` → `UnboundLocalError`
+  at scoring; the dead block is removed.
 - **Eval in 4-bit** (`LOAD_IN=4bit`): a 7B in 16-bit OOMs a 16 GB T4
   (`CUBLAS_STATUS_ALLOC_FAILED`). Base + fine-tuned both 4-bit for a fair compare.
 - **Single-GPU is the safe default** (`NUM_PROCESSES=1`): clean tracebacks;
