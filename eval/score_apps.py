@@ -196,19 +196,33 @@ def _score_problem(code: str, io: dict, timeout: float, max_tests: int):
     return (passed == total), (passed / total if total else 0.0), total
 
 
+def _score_one(task):
+    """Top-level worker (must be importable for ProcessPoolExecutor)."""
+    i, code, io, timeout, max_tests = task
+    strict, avg, _ = _score_problem(code, io, timeout, max_tests)
+    return i, strict, avg, bool(io.get("fn_name"))
+
+
 def _score_tier(gens: list[str], rows: list[dict], timeout: float,
-                max_tests: int, limit: int):
+                max_tests: int, limit: int, workers: int, tag: str = ""):
+    import concurrent.futures as cf
     n = min(len(gens), len(rows), limit) if limit else min(len(gens), len(rows))
+    tasks = [(i, gens[i], rows[i], timeout, max_tests) for i in range(n)]
     strict_hits = 0
     avg_sum = 0.0
     callbased = 0
-    for i in range(n):
-        io = rows[i]
-        if io.get("fn_name"):
-            callbased += 1
-        strict, avg, _ = _score_problem(gens[i], io, timeout, max_tests)
-        strict_hits += 1 if strict else 0
-        avg_sum += avg
+    done = 0
+    # Parallel across CPU cores; each worker still runs its own per-test
+    # subprocesses. This is the big speedup vs the single-threaded v1 of this file.
+    with cf.ProcessPoolExecutor(max_workers=workers) as ex:
+        for _i, strict, avg, cb in ex.map(_score_one, tasks, chunksize=1):
+            strict_hits += 1 if strict else 0
+            avg_sum += avg
+            callbased += 1 if cb else 0
+            done += 1
+            if done % 25 == 0 or done == n:
+                print(f"    [{tag}] {done}/{n} scored "
+                      f"(running strict={100*strict_hits/done:.1f}%)", flush=True)
     return {
         "n": n,
         "strict_accuracy": strict_hits / n if n else 0.0,
@@ -228,9 +242,15 @@ def main() -> int:
     ap.add_argument("--max-tests", type=int, default=50,
                     help="cap hidden tests/problem for speed (0=all). Capped runs "
                          "slightly OVER-count. 25 reproduces the diagnose_apps gate.")
-    ap.add_argument("--timeout", type=float, default=6.0)
+    ap.add_argument("--timeout", type=float, default=4.0,
+                    help="per-test seconds; looping wrong solutions burn this, so "
+                         "keep it modest")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="parallel worker processes (0 = os.cpu_count())")
     ap.add_argument("--scores-out", default="results/scores.rescored.json")
     args = ap.parse_args()
+
+    workers = args.workers or (os.cpu_count() or 4)
 
     labels = [x.strip() for x in args.labels.split(",") if x.strip()]
     tiers = [x.strip() for x in args.tiers.split(",") if x.strip()]
@@ -250,7 +270,8 @@ def main() -> int:
                 continue
             gens = _load_generations(gpath)
             res = _score_tier(gens, tier_rows[tier], args.timeout,
-                              args.max_tests, args.limit)
+                              args.max_tests, args.limit, workers,
+                              tag=f"{label}/{tier}")
             strict_pct = 100 * res["strict_accuracy"]
             avg_pct = 100 * res["avg_accuracy"]
             print(f"{label:<10} {tier:<13} {strict_pct:>6.2f}%        "
@@ -293,6 +314,8 @@ def main() -> int:
         ],
         "records": records,
     }
+    scores_dir = os.path.dirname(os.path.abspath(args.scores_out))
+    os.makedirs(scores_dir, exist_ok=True)
     json.dump(scores, open(args.scores_out, "w", encoding="utf-8"), indent=2)
     print(f"\nWrote {args.scores_out} and per-tier *_metrics.rescored.json.")
     print("Render:  python eval/build_results_table.py "
