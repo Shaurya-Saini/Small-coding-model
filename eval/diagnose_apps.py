@@ -83,7 +83,11 @@ def _load_apps_tests(tier: str, limit: int, limit_start: int):
             io = json.loads(io_raw, parse_int=str) if io_raw else {}
         except Exception:
             io = {}
-        rows.append(io)
+        rows.append({
+            "question": row.get("question", "") or "",
+            "starter_code": row.get("starter_code", "") or "",
+            "io": io,
+        })
     return rows
 
 
@@ -126,10 +130,11 @@ def _run_one(code: str, stdin_text: str, timeout: float):
             pass
 
 
-def _classify(code: str, io: dict, timeout: float):
+def _classify(code: str, io: dict, timeout: float, probe: dict | None = None):
     """Score one generation against all of a problem's hidden tests, strict AND
-    normalized. Returns (category, detail) where category is the WORST outcome
-    across the problem's tests (a problem passes only if ALL tests pass)."""
+    normalized. Returns (category, detail). A problem passes only if ALL tests
+    pass. If `probe` is passed, the first test's (input, expected, got) is stored
+    into it for the --show-io dump."""
     if not code.strip():
         return "EMPTY", ""
     try:
@@ -150,10 +155,13 @@ def _classify(code: str, io: dict, timeout: float):
     strict_all = True
     norm_all = True
     first_detail = ""
-    for inp, exp in zip(inputs, outputs):
+    for t, (inp, exp) in enumerate(zip(inputs, outputs)):
         stdin_text = _as_text(inp)
         expected = _as_text(exp)
         status, got, stderr = _run_one(code, stdin_text, timeout)
+        if probe is not None and t == 0:
+            probe.update(stdin=stdin_text, expected=expected,
+                         got=(got if status == "ok" else f"<{status}> {stderr[-200:]}"))
         if status == "timeout":
             return "TIMEOUT", ""
         if status == "runtime":
@@ -209,6 +217,9 @@ def main() -> int:
                     help="compile/structure only; no execution, no dataset needed")
     ap.add_argument("--show", type=int, default=6,
                     help="how many per-problem detail lines to print")
+    ap.add_argument("--show-io", action="store_true",
+                    help="for each shown problem, dump question + first test's "
+                         "input/expected/got + the code's I/O lines (alignment check)")
     args = ap.parse_args()
 
     gens = _load_generations(args.generations)
@@ -221,15 +232,29 @@ def main() -> int:
               "execute against real tests).")
         return 0
 
-    tests = _load_apps_tests(args.tier, args.limit, args.limit_start)
+    rows = _load_apps_tests(args.tier, args.limit, args.limit_start)
     counts = Counter()
     shown = 0
-    for i, io in enumerate(tests):
+    for i, row in enumerate(rows):
         code = gens[args.limit_start + i]
-        cat, detail = _classify(code, io, args.timeout)
+        probe: dict = {} if args.show_io else None
+        cat, detail = _classify(code, row["io"], args.timeout, probe=probe)
         counts[cat] += 1
-        if shown < args.show and cat not in ("PASS",):
+        if shown < args.show and cat != "PASS":
             print(f"  [{args.limit_start + i:>3}] {cat:<16} {detail}")
+            if args.show_io:
+                io = row["io"]
+                q = " ".join(row["question"].split())
+                io_lines = [ln for ln in code.splitlines()
+                            if ("input(" in ln or "stdin" in ln or "print(" in ln)]
+                print(f"        Q: {q[:220]}")
+                print(f"        fn_name={io.get('fn_name')} "
+                      f"n_tests={len(io.get('inputs') or [])}")
+                if probe:
+                    print(f"        stdin[0]   : {probe.get('stdin','')[:120]!r}")
+                    print(f"        expected[0]: {probe.get('expected','')[:120]!r}")
+                    print(f"        got[0]     : {probe.get('got','')[:120]!r}")
+                print(f"        code I/O   : {' | '.join(l.strip() for l in io_lines[:6])}")
             shown += 1
 
     print("\n--- outcome histogram (worst-per-problem) ---")

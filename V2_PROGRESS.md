@@ -50,7 +50,9 @@ re-executes saved v1 generations against real APPS tests to prove *why* base sco
 - [x] `eval/diagnose_apps.py` written; **static autopsy done** (offline, no GPU):
   - Base introductory: **146/150 compile, 145/150 print, yet 0% strict / 0.84% avg** → measurement/scoring bug (not ability).
   - Fine-tuned introductory: **only 18/150 compile, 132/150 syntax errors (`unmatched ')'`)** → REAL bracket artifact from golfed-code training (root cause #3). Eval fixes won't rescue it; v2 data change will.
-- [ ] **Run `diagnose_apps.py` WITH execution on Kaggle** (needs `datasets`) to prove the base scoring bug: does whitespace-normalized scoring recover the "wrong" answers? (format artifact) vs genuinely wrong.
+- [~] **Ran `diagnose_apps.py` WITH execution (base, introductory, 30):** result refined the diagnosis. NOT a whitespace/scoring artifact (0/30 recovered by normalization). Dominant failure = **RUNTIME_ERROR 22/30**, all input-parsing mismatches (code reads wrong stdin shape: `int('7 5')`, unpack-count errors, EOF). Model writes competent algorithms but its input-reader guesses the wrong format → REAL but likely *recoverable* (clearer I/O-contract prompt + reasoning + multi-sample), not "model hopeless."
+- [ ] **Confirm generation↔test alignment** with `--show-io` (does each solution match its aligned question?). Rules out an index/prompt bug before attributing failures to the model.
+- [ ] Once alignment confirmed: this is a **prompt/eval-setup** issue as much as model — v2 eval must give a clear input-format contract + reasoning room + avg@k, not just relax comparison.
 - [ ] Based on that: fix the APPS harness scoring/prompt (comparison strictness and/or output-format contract) so base measures fairly
 - [ ] Add **HumanEval+/MBPP+ sanity bench**; confirm *base* scores ~85% → proves the pipeline works (gate before trusting any CP number)
 - [ ] Stand up **`lcb_runner`** (LiveCodeBench); pin one version/window (v5 or v6)
