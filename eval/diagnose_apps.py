@@ -144,11 +144,14 @@ def _run_one(code: str, stdin_text: str, timeout: float):
             pass
 
 
-def _classify(code: str, io: dict, timeout: float, probe: dict | None = None):
-    """Score one generation against all of a problem's hidden tests, strict AND
+def _classify(code: str, io: dict, timeout: float, probe: dict | None = None,
+              max_tests: int = 0):
+    """Score one generation against a problem's hidden tests, strict AND
     normalized. Returns (category, detail). A problem passes only if ALL tests
     pass. If `probe` is passed, the first test's (input, expected, got) is stored
-    into it for the --show-io dump."""
+    into it for the --show-io dump. `max_tests`>0 caps tests/problem for speed --
+    which OVER-counts passes (a later hidden test might fail), so a capped run
+    answers 'is it ~0 or clearly >0?', not the exact final number."""
     if not code.strip():
         return "EMPTY", ""
     try:
@@ -165,6 +168,8 @@ def _classify(code: str, io: dict, timeout: float, probe: dict | None = None):
     outputs = io.get("outputs") or []
     if not inputs:
         return "NO_OUTPUT", "no test cases in dataset row"
+    if max_tests and max_tests > 0:
+        inputs, outputs = inputs[:max_tests], outputs[:max_tests]
 
     strict_all = True
     norm_all = True
@@ -227,6 +232,9 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=30, help="problems to autopsy")
     ap.add_argument("--limit-start", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=6.0, help="per-test seconds")
+    ap.add_argument("--max-tests", type=int, default=0,
+                    help="cap hidden tests/problem for speed (0=all). Capped runs "
+                         "OVER-count passes; use for 'is it ~0 or >0?', not finals.")
     ap.add_argument("--static-only", action="store_true",
                     help="compile/structure only; no execution, no dataset needed")
     ap.add_argument("--show", type=int, default=6,
@@ -252,7 +260,8 @@ def main() -> int:
     for i, row in enumerate(rows):
         code = gens[args.limit_start + i]
         probe: dict = {} if args.show_io else None
-        cat, detail = _classify(code, row["io"], args.timeout, probe=probe)
+        cat, detail = _classify(code, row["io"], args.timeout, probe=probe,
+                                max_tests=args.max_tests)
         counts[cat] += 1
         if shown < args.show and cat != "PASS":
             print(f"  [{args.limit_start + i:>3}] {cat:<16} {detail}")
