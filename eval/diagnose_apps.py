@@ -69,12 +69,26 @@ def _load_generations(path: str) -> list[str]:
 
 
 def _load_apps_tests(tier: str, limit: int, limit_start: int):
-    """Return the APPS TEST-split rows for a tier, as (input_output_dict, ...).
+    """Return the APPS TEST-split rows for a tier, in the SAME order the
+    bigcode harness's `apps-<tier>` task uses -- i.e. the difficulty CONFIG
+    (introductory-only), NOT the full 5000-problem 'all' config. Getting this
+    wrong misaligns generation[i] with problem[i] and makes every score bogus.
     parse_int=str guards the thousands-of-digit integers in APPS I/O that blow up
     Python's int() (same guard as data/prepare_apps.py)."""
     from datasets import load_dataset
-    ds = load_dataset("codeparrot/apps", split="test", trust_remote_code=True,
-                      difficulties=[TIER_ALIASES[tier]])
+    name = TIER_ALIASES[tier]
+    try:
+        # Canonical: the difficulty config gives only that tier's problems in the
+        # harness's order. (This is what `--tasks apps-introductory` iterates.)
+        ds = load_dataset("codeparrot/apps", name, split="test",
+                          trust_remote_code=True)
+    except Exception:
+        # Fallback: filter the 'all' config by the difficulty column, preserving
+        # original order.
+        full = load_dataset("codeparrot/apps", split="test", trust_remote_code=True)
+        ds = full.filter(lambda r: r.get("difficulty") == name)
+    print(f"  loaded codeparrot/apps [{name}] test: {len(ds)} problems "
+          f"(expect ~1000 for introductory, NOT 5000)")
     rows = []
     for i in range(limit_start, min(limit_start + limit, len(ds))):
         row = ds[i]
