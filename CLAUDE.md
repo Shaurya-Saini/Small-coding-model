@@ -29,14 +29,21 @@ before/after vs. the base checkpoint, reported transparently including where the
   `Shaurya-saini/qwen2.5-coder-7b-apps-qlora` (+ `…-lora` adapter).
 - **Evaluated:** base vs. fine-tuned on APPS test, 150 problems/tier, 4-bit,
   chat-templated prompt.
-- **Result (honest):** the v1 fine-tune **underperformed the base on every tier.**
+- **Result (honest, APPS numbers RE-SCORED 2026-08-17):** the v1 fine-tune
+  **underperformed the base on every tier.** The *original* v1 table was invalid —
+  bigcode-harness's APPS scorer was broken (reported base easy/hard = 0.0% for
+  generations that are actually ~16%/3.3% correct; see §8). Re-scored with
+  `eval/score_apps.py` (aligned, whitespace-normalized, ≤25 tests/problem):
 
 | Difficulty (APPS test, pass@1 = strict; avg test-case rate in parens) | Base | Fine-tuned v1 |
 |---|---|---|
-| Easy / Introductory | 0.0% (0.84%) | 0.0% (0.22%) |
-| Medium / Interview | 7.3% (30.2%) | 2.0% (7.4%) |
-| Hard / Competition | 0.0% (0.54%) | 0.0% (0.0%) |
+| Easy / Introductory | 16.0% (34.3%) | 0.7% (3.1%) |
+| Medium / Interview | 9.3% (36.3%) | 2.0% (6.8%) |
+| Hard / Competition | 3.3% (16.2%) | 0.0% (1.3%) |
 
+The corrected base is respectable and monotonic (easy>medium>hard); the fine-tune
+is genuinely worse everywhere (real broken-bracket artifact, not a scoring bug).
+The *original* bogus numbers were: base 0.0/7.3/0.0, ft 0.0/2.0/0.0 (strict).
 Two metrics are reported: **pass@1** (strict accuracy — all hidden tests pass) and
 **average test-case pass rate** (partial credit). Artifacts: `results/report.md`
 (two tables + two diagrams), `results/figures/apps.png` (pass@1) and
@@ -87,9 +94,10 @@ scope for a free T4** beyond a tiny didactic run.
   on **OpenCodeReasoning**-style long reasoning traces instead of golfed shortest
   solutions. *Still supervised imitation — but of the reasoning process + a clean
   solution, not a cryptic destination.* Directly fixes root causes 1 & 3.
-- **Base model (decide before training):** keep Qwen2.5-Coder-7B-Instruct (clean
-  v1→v2 ablation) *or* switch to **DeepSeek-R1-Distill-Qwen-7B** (reasoning base,
-  higher hard-tier ceiling).
+- **Base model (DECIDED 2026-08-17): keep Qwen2.5-Coder-7B-Instruct** — cleanest
+  v1→v2 ablation (only the DATA changes). Same recipe OpenCodeReasoning used to take
+  a 7B to ~51% LCB. (DeepSeek-R1-Distill-Qwen-7B was the higher-ceiling alternative,
+  not chosen — it would confound the ablation by changing base + data at once.)
 - **Anti-forgetting:** lower LR (~1e-4), fewer steps, optionally mix in general
   instruction data; track a general-code sanity metric (below) to prove no
   regression.

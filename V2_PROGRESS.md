@@ -17,13 +17,29 @@ window.
 
 | # | Decision | Options | Recommendation | Status |
 |---|---|---|---|---|
-| D1 | **Base model** | (a) keep Qwen2.5-Coder-7B-Instruct (clean v1→v2 ablation) · (b) DeepSeek-R1-Distill-Qwen-7B (reasoning base, higher hard-tier ceiling) | Lean (b) for ceiling; (a) if a controlled ablation matters more | `[!]` |
-| D2 | **Eval: keep or drop APPS** | (a) demote to sanity · (b) drop · (c) keep as co-headline | **DECIDED (c):** fix the APPS harness AND add LCB; report both as co-headlines | `[x]` |
-| D3 | **Eval precision** | bf16 headline + 4-bit "local-deploy" column · vs · 4-bit only (as v1) | bf16 headline, keep a 4-bit column | `[!]` |
-| D4 | **RL stretch goal** | attempt a tiny GRPO+QLoRA run · vs · SFT-only for v2 | SFT-only for the real result; GRPO only as a didactic write-up if time allows | `[!]` |
+| D1 | **Base model** | (a) keep Qwen2.5-Coder-7B-Instruct · (b) DeepSeek-R1-Distill-Qwen-7B | **DECIDED (a):** keep Qwen2.5-Coder-7B-Instruct — cleanest v1→v2 ablation (only the DATA changes: golfed solutions → reasoning traces), same OpenCodeReasoning recipe that took a 7B to ~51% LCB. | `[x]` |
+| D2 | **Eval: keep or drop APPS** | (a) demote to sanity · (b) drop · (c) keep as co-headline | **DECIDED (c):** keep APPS (now scored by `score_apps.py`) AND add LCB, as co-headlines. | `[x]` |
+| D3 | **Eval precision** | bf16 headline + 4-bit column · vs · 4-bit only | **DECIDED (split):** the APPS v1→v2 continuity table stays **4-bit** (matches the saved v1 generations, apples-to-apples); the **LiveCodeBench** headline + frontier comparison runs **bf16** (don't cripple our model vs full-precision APIs). | `[x]` |
+| D4 | **RL stretch goal** | tiny GRPO+QLoRA · vs · SFT-only | **DECIDED:** SFT-only for the real v2 result. GRPO+QLoRA only as an optional didactic experiment if time allows — a full RL run needs a datacenter (DeepCoder = 32×H100 × 2.5 wks). | `[x]` |
 
-**Eval approach (DECIDED):** diagnose v1 first, then rebuild. `eval/diagnose_apps.py`
-re-executes saved v1 generations against real APPS tests to prove *why* base scored 0%.
+**Eval approach (DECIDED):** diagnose v1 first, then rebuild. Outcome: v1 harness
+scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
+16.0/9.3/3.3, fine-tune 0.7/2.0/0.0 strict).
+
+### v2 design notes settled today (2026-08-17)
+- **Data = OpenCodeReasoning (Python).** Pick a session-sized subset (target ~10–20k
+  traces to fit a free T4); each example rendered as `problem → <think>reasoning</think>
+  → clean solution` inside Qwen's chat template. Prompt-mask everything before the
+  assistant turn. Keep `parse_int=str` guard from v1.
+- **Long-sequence cost:** reasoning traces are long → need larger `max_seq_len`
+  (~4–8k) than v1, which raises VRAM/time on a T4. Budget for it (fewer steps, grad
+  accumulation, aggressive checkpointing).
+- **Eval implication of reasoning:** at eval time the v2 model EMITS long `<think>`
+  before code → generation needs a large `max_new_tokens`, and code extraction must
+  take the **last** ```python fence after the reasoning. `score_apps.py` scores
+  already-extracted code, so this lives in the generation/postprocess step.
+- **Firewall unchanged:** OpenCodeReasoning (train) ≠ APPS-test (eval) ≠ LiveCodeBench
+  (eval only, never trained on).
 
 ---
 
@@ -31,10 +47,12 @@ re-executes saved v1 generations against real APPS tests to prove *why* base sco
 - [x] Survey base-model CP performance, existing projects, RL techniques, datasets/benchmarks (2026-08-17 web survey → `CLAUDE.md §3`)
 - [x] Diagnose v1 eval as a first-class bottleneck (base 0% on APPS-introductory red flag)
 - [x] Update `CLAUDE.md §3` with v2 research + plan + eval overhaul
-- [ ] Resolve D1–D4 above
+- [x] Resolve D1–D4 (all decided 2026-08-17 — see table)
+- [x] Correct & re-publish v1 results (scores.json, report.md, figures, README, CLAUDE.md, setup.md)
 
-## Phase 1 — Data (fix root cause #1) `[ ]`
-- [ ] Choose reasoning-trace dataset (OpenCodeReasoning primary; consider CodeContests+/TACO-Verified for cleaner tests)
+## Phase 1 — Data (fix root cause #1) `[ ]`  ← NEXT SESSION STARTS HERE
+- [x] Dataset chosen: **OpenCodeReasoning** (Python reasoning traces); base stays Qwen2.5-Coder-7B-Instruct (D1)
+- [ ] Decide subset size that fits a free T4 session (~10–20k traces) + max_seq_len (~4–8k)
 - [ ] Write `data/prepare_reasoning_traces.py` (Parquet loader; keep `parse_int=str` guard) → `data/*_train.jsonl`
 - [ ] Format each example as `problem → <think> trace </think> → clean solution` inside the chat template
 - [ ] Sanity: inspect 10 rendered training samples; confirm targets are *reasoning + clean code*, not golfed one-liners
@@ -57,10 +75,10 @@ re-executes saved v1 generations against real APPS tests to prove *why* base sco
 - [x] **Confirmed on 100 aligned introductory: base = 12% strict (13% normalized), NOT 0%.** → v1's harness APPS scorer is BROKEN (threw away valid ~12%-correct generations). Root cause of the whole v1 "base looks terrible" impression is a **scoring bug**, not the model. (Also confirms APPS strict exact-match penalizes multi-answer problems.)
 - [x] **FIX written: `eval/score_apps.py`** — standalone verified scorer that replaces the fragile bigcode APPS scorer. Re-scores the SAVED generations (no GPU): aligned via difficulty config, stdin + call-based support, whitespace-normalized, emits per-tier `*_metrics.rescored.json` + `results/scores.rescored.json` for `build_results_table.py`. Generation was never broken, so no regeneration needed for a corrected v1 table.
 - [x] **Gate PASSED:** `score_apps.py` base/introductory = **16.0% strict, 34.3% avg** (n=150) vs v1's reported 0.0%/0.84%. Confirms the v1 harness scorer was broken and the base is respectable. (Fixed two issues: single-threaded slowness → now parallel across CPU cores w/ live progress + 4s timeout; and a missing output-dir mkdir.)
-- [ ] **Full run:** both models × 3 tiers → `results/scores.rescored.json` → corrected v1 comparison table.
-- [ ] Render corrected table: `build_results_table.py --scores results/scores.rescored.json`; update `README.md` + `CLAUDE.md §2` with the TRUE v1 numbers (base and fine-tune both re-scored — v1's medium=7.33%/hard=0% came from the same broken scorer and are also suspect).
+- [x] **Full run done (both models × 3 tiers, corrected):** base 16.0/9.3/3.3 strict (34.3/36.3/16.2 avg); fine-tune 0.7/2.0/0.0 (3.1/6.8/1.3). All tiers `call-based=0` → all stdin, fully trusted path. **Base beats fine-tune on every tier & both metrics, at correct magnitudes.** (Parallel scorer: base introductory ~fast now; fine-tune tiers fast since most don't compile.)
+- [x] **Corrected results committed to repo (done locally from pasted numbers, incl. figures — matplotlib is local):** updated `results/scores.json`, regenerated `results/report.md` + `results/figures/apps.png`/`apps_avg.png`, updated `CLAUDE.md §2` and `README.md` (Results + a new "the harness can be the bug" conclusion). Old bogus numbers preserved as record in `CLAUDE.md`.
+- [x] **APPS scorer replaced, not patched:** `score_apps.py` supersedes the broken bigcode APPS scoring path entirely (no need to fix the harness's comparison/prompt).
 - [ ] Then v2-quality eval: regenerate with bf16 + reasoning-prompt + avg@k, score with the same `score_apps.py`; add LiveCodeBench (functional) as co-headline.
-- [ ] Based on that: fix the APPS harness scoring/prompt (comparison strictness and/or output-format contract) so base measures fairly
 - [ ] Add **HumanEval+/MBPP+ sanity bench**; confirm *base* scores ~85% → proves the pipeline works (gate before trusting any CP number)
 - [ ] Stand up **`lcb_runner`** (LiveCodeBench); pin one version/window (v5 or v6)
 - [ ] Verify a known-correct solution scores 1.0 (execution sanity) before any full run
@@ -95,3 +113,13 @@ re-executes saved v1 generations against real APPS tests to prove *why* base sco
   introductory → **v1 harness APPS scorer is broken.** Added `eval/score_apps.py`
   (verified standalone scorer) to re-score saved generations GPU-free. Fine-tune's
   bracket artifact remains real. Next: run score_apps.py, render corrected v1 table.
+- 2026-08-17 — **Corrected v1 eval published.** Full re-score: base 16.0/9.3/3.3 vs
+  fine-tune 0.7/2.0/0.0 (strict). `score_apps.py` parallelized + mkdir fix. Updated
+  scores.json/report.md/figures/CLAUDE.md/README.md locally. **Diagnosis+correction
+  phase COMPLETE.**
+- 2026-08-17 (session wrap) — **All decisions closed (D1–D4).** D1: keep Qwen2.5-
+  Coder-7B-Instruct. D3: APPS table 4-bit / LCB headline bf16. D4: SFT-only primary.
+  Doc consistency pass done: README got a dedicated "evaluation-harness bug" section
+  + corrected observations/conclusions/next-steps; setup.md eval steps rewritten to
+  use `score_apps.py`; v2 design notes recorded. **NEXT SESSION: Phase 1** — pick
+  OpenCodeReasoning subset size + write `data/prepare_reasoning_traces.py`.

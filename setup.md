@@ -109,13 +109,39 @@ LIMIT=150 NUM_PROCESSES=2 MODEL=<user>/qwen2.5-coder-7b-apps-qlora LABEL=finetun
 LIMIT=150 NUM_PROCESSES=2 MODEL=Qwen/Qwen2.5-Coder-7B-Instruct LABEL=base \
   HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
 ```
-Metrics land in `results/apps/<label>/<task>_metrics.json`.
+Generations land in `results/apps/<label>/<task>_generations*.json`.
 
-### 4.5 Build results table + diagram
-Fill `results/scores.json` (copy `results/scores.template.json`) from the
-`*_metrics.json` files (`pass@1` = `strict_accuracy`), then:
+> **Do NOT trust the harness's own `*_metrics.json`.** Its APPS scorer was found
+> broken for this setup (it reported 0.0% on introductory for generations that are
+> ~16% correct — it mis-aligns solutions with the wrong problems' tests). The
+> *generations* are fine; only its *scoring* is wrong. Score with `score_apps.py`
+> instead (next step). If you only need generations, pass `--generation_only` is
+> not required — the wrapper already saves them.
+
+### 4.5 Score the generations with `score_apps.py` (replaces the harness scorer)
+`score_apps.py` re-scores the saved generations correctly: it aligns each solution
+to its problem via the difficulty config, executes against the hidden tests
+(stdin + call-based), compares whitespace-normalized, and writes both per-tier
+`*_metrics.rescored.json` and a consolidated `results/scores.rescored.json`. CPU-
+only, parallel across cores; needs `datasets`. Validation gate: base/introductory
+should be ~16%.
 ```bash
-python eval/build_results_table.py        # -> results/report.md + results/figures/*.png
+# both models, all tiers (up to 25 hidden tests/problem for speed)
+python /path/to/SCM/eval/score_apps.py \
+  --results-dir /path/to/SCM/results/apps --labels base,finetuned --max-tests 25 \
+  --scores-out /path/to/SCM/results/scores.rescored.json
+```
+To autopsy *why* a run scores low (static + execution + alignment self-check):
+```bash
+python /path/to/SCM/eval/diagnose_apps.py \
+  --generations results/apps/base/apps-introductory_generations_apps-introductory.json \
+  --tier introductory --label base --limit 30 --show-io
+```
+
+### 4.6 Build results table + diagram
+```bash
+python eval/build_results_table.py --scores results/scores.rescored.json \
+  --out results/report.md        # -> results/report.md + results/figures/*.png
 ```
 
 ---
