@@ -54,8 +54,11 @@ re-executes saved v1 generations against real APPS tests to prove *why* base sco
 - [x] **Re-ran aligned (fixed loader): questions now match code.** On 10 aligned introductory: 1 PASS / 5 WRONG / 3 RUNTIME / 1 NO_OUTPUT. So in the v1 setup (4-bit, greedy, no-reasoning, bare prompt) the base genuinely produces wrong/buggy solutions — real, not pure artifact. TWO caveats though:
   - **v1's reported 0.0% is still likely an undercount:** aligned executor already found 1/10; hitting exactly 0/150 if the true rate is ~10% is statistically near-impossible. Also v1 had introductory (0%) < interview (7.3%), which is backwards. → the v1 *introductory* number specifically is suspect.
   - **APPS strict exact-match is partly unfair:** problems with multiple valid answers (e.g. "choose any 3 vertices achieving max") can't be credited by string match → argues for LiveCodeBench (functional checks) as the v2 headline.
-- [ ] **Confirm base ~0% vs ~10%** on a larger aligned sample (`--limit 100 --max-tests 25`). Decides whether v1's APPS numbers are trustworthy at all.
-- [ ] Given findings: v2 eval leans on LCB (functional) + a clear input-format-contract prompt + bf16 + avg@k; APPS kept as co-headline but with these fixes (D2).
+- [x] **Confirmed on 100 aligned introductory: base = 12% strict (13% normalized), NOT 0%.** → v1's harness APPS scorer is BROKEN (threw away valid ~12%-correct generations). Root cause of the whole v1 "base looks terrible" impression is a **scoring bug**, not the model. (Also confirms APPS strict exact-match penalizes multi-answer problems.)
+- [x] **FIX written: `eval/score_apps.py`** — standalone verified scorer that replaces the fragile bigcode APPS scorer. Re-scores the SAVED generations (no GPU): aligned via difficulty config, stdin + call-based support, whitespace-normalized, emits per-tier `*_metrics.rescored.json` + `results/scores.rescored.json` for `build_results_table.py`. Generation was never broken, so no regeneration needed for a corrected v1 table.
+- [ ] **Run `score_apps.py` on Kaggle** (needs `datasets`, CPU-only). Gate: `--max-tests 25` must reproduce base/introductory ≈12%. Then full run `--max-tests 50` for both models × 3 tiers → corrected v1 comparison table.
+- [ ] Render corrected table: `build_results_table.py --scores results/scores.rescored.json`; update `README.md` + `CLAUDE.md §2` with the TRUE v1 numbers (base and fine-tune both re-scored — v1's medium=7.33%/hard=0% came from the same broken scorer and are also suspect).
+- [ ] Then v2-quality eval: regenerate with bf16 + reasoning-prompt + avg@k, score with the same `score_apps.py`; add LiveCodeBench (functional) as co-headline.
 - [ ] Based on that: fix the APPS harness scoring/prompt (comparison strictness and/or output-format contract) so base measures fairly
 - [ ] Add **HumanEval+/MBPP+ sanity bench**; confirm *base* scores ~85% → proves the pipeline works (gate before trusting any CP number)
 - [ ] Stand up **`lcb_runner`** (LiveCodeBench); pin one version/window (v5 or v6)
@@ -87,3 +90,7 @@ re-executes saved v1 generations against real APPS tests to prove *why* base sco
 - 2026-08-17 — D2 decided (APPS co-headline) + eval approach (diagnose-first).
   Added `eval/diagnose_apps.py`; static autopsy split the v1 failure: base = scoring
   bug, fine-tune = real bracket artifact. Next: run it with execution on Kaggle.
+- 2026-08-17 — Diagnosis complete. Confirmed base = 12% (not 0%) on aligned
+  introductory → **v1 harness APPS scorer is broken.** Added `eval/score_apps.py`
+  (verified standalone scorer) to re-score saved generations GPU-free. Fine-tune's
+  bracket artifact remains real. Next: run score_apps.py, render corrected v1 table.

@@ -264,6 +264,29 @@ Directories are created by the phase that needs them.
   (a "finetuned" run was actually the base model).
 - **APPS task names use hyphens** (`apps-introductory`), confirmed.
 
+### The v1 APPS numbers are BROKEN — the harness scorer, not the model (2026-08-17)
+- **The bigcode-harness APPS scorer reported 0.0% on introductory for base
+  generations that are actually ~12% correct.** Proved by re-scoring the *saved*
+  generations with an independent, alignment-verified executor: base introductory
+  = 12/100 strict (13 normalized). Generation/postprocessing was fine all along;
+  the harness's **scoring/orchestration** is the bug. The backwards v1 signal
+  (introductory 0% < interview 7.3%) was the tell.
+- **Do not trust ANY v1 APPS number** (base *or* fine-tune, all tiers) — they came
+  from that scorer. Re-score everything with `eval/score_apps.py` before reporting.
+- **The alignment trap (bit us twice):** `codeparrot/apps` must be loaded via the
+  difficulty **config** — `load_dataset("codeparrot/apps","introductory",split=
+  "test")` — NOT `difficulties=[...]` (silently ignored → loads all 5000, misaligns
+  generation[i] with problem[i], every score bogus). `--show-io` in `diagnose_apps.py`
+  catches this (question must match the code).
+- **APPS strict exact-match is partly unfair** — multi-valid-answer problems (e.g.
+  "output any 3 vertices achieving the max") can't be credited. Extra reason to make
+  **LiveCodeBench (functional checks)** the v2 co-headline.
+- **New eval tools:** `eval/diagnose_apps.py` (autopsy: static + execution +
+  `--show-io` alignment check) and `eval/score_apps.py` (the standalone verified
+  scorer that REPLACES the harness scorer; stdin + call-based; emits
+  `results/scores.rescored.json`). Validation gate: `score_apps.py --max-tests 25`
+  reproduces base/introductory ≈12%.
+
 ### Eval design facts to remember
 - The wrapper is self-healing: it auto-runs `fix_pyext_py312.py` and
   `fix_harness_apps.py` before each launch, exports `HF_DATASETS_TRUST_REMOTE_CODE=1`
