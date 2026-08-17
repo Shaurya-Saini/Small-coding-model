@@ -53,12 +53,12 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
 ## Phase 1 — Data (fix root cause #1) `[~]`  ← code done; validate in the Kaggle trial
 - [x] Dataset chosen: **OpenCodeReasoning** (Python reasoning traces); base stays Qwen2.5-Coder-7B-Instruct (D1)
 - [x] **Decided: config `split_0` only** (question inline via `input`; no APPS/TACO join, unlike `split_1`)
-- [x] **Decided: subset ~10k examples, `max_seq_len` 8192** (keeps traces intact vs truncating; ~2.5–4h on T4 x2)
-- [x] **Decided: firewall = `split=='train'` AND source ∈ {apps, taco, code_contests, codeforces}** (`ALLOWED_SOURCES` constant) — kills APPS-test/valid leakage; LCB overlap deferred to eval-window choice (Phase 3)
-- [x] Wrote `data/prepare_reasoning_traces.py` (streams split_0; firewall; reconstructs `<think>…</think>` + clean ```python``` fence; exact Qwen-tokenizer length filter w/ char-proxy fallback; per-source cap + buffered shuffle)
+- [x] **REVISED after trial: subset ~3000 examples @ `max_seq_len` 4096** (was 10k@8192). Trial showed Unsloth free uses **1 T4 only** (~22 s/ex @ 8192) → 10k@8192 ≈ 62h, infeasible; 3k@4096 ≈ 8–9h fits one session.
+- [x] **REVISED after trial: firewall = `split=='train'` only + empty `EXCLUDE_SOURCES` = ALL split_0 platforms, balanced by per-source cap.** Verified split_0 has **no apps/taco** (they're in split_1); its sources are live platforms (codeforces/code_contests/atcoder/codechef/aizu/hackerearth/…). APPS-test firewall now automatic; LCB firewall deferred to eval-window choice (Phase 3).
+- [x] Wrote + **debugged** `data/prepare_reasoning_traces.py`. Trial exposed 3 bugs (all fixed): (1) old allow-list {apps,taco,code_contests,codeforces} ∩ split_0 = only code_contests → mono-source output; (2) per-source cap checked AFTER the expensive regex parse → wasted the scan budget on 374k over-cap rows; (3) `--max-scan` too low to reach late-in-stream platforms. Now: cheap firewall+cap BEFORE parse, `--max-scan` 1.5M, deny-list instead of allow-list.
 - [x] Format = `problem → <think> trace </think> → clean solution` written to `data/reasoning_train.jsonl` as `{prompt, response}`; training masks everything before the assistant turn
-- [x] Firewall enforced in code + unit-tested offline (test-split / disallowed-source / no-think / no-input all correctly skipped)
-- [ ] **Kaggle trial:** inspect ~10 *real* rendered rows (needs the HF stream); confirm targets are reasoning + clean code, not golfed one-liners
+- [x] Firewall + parse split into `firewall_source()` (cheap) / `parse_row()` (expensive); unit-tested offline (test/valid-split, empty-source, no-think, no-input all skip; codeforces/atcoder/train kept)
+- [ ] **Kaggle re-run (next):** run fixed prep, confirm `sources={…}` shows a spread (not 100% code_contests) and reaches ~3000; inspect a few rendered rows
 - [x] Three-dataset firewall preserved: separate script/output; APPS-test & LiveCodeBench never touched
 
 ## Phase 2 — Training (fix root cause #2) `[~]`  ← code done; validate in the Kaggle trial
@@ -66,7 +66,8 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
 - [x] Anti-forgetting defaults: `--lr 1e-4`, 1 epoch; long-seq T4 defaults `--max-seq-len 8192 --batch-size 1 --grad-accum 8` (effective batch 8)
 - [x] Aggressive checkpointing carried over (save_steps/save_total_limit, `--resume`); **resume to be re-tested in the Kaggle trial**
 - [x] Push path updated to a **distinct** v2 repo `qwen2.5-coder-7b-ocr-qlora` (v1 model not overwritten); merged-16bit + adapter + tokenizer push logic unchanged (see `CLAUDE.md §8`)
-- [ ] **Kaggle trial:** run the smoke (`--max-samples 300 --max-steps 15`), confirm loss drops + checkpoint written, then the full run + push
+- [x] **Kaggle smoke PASSED:** loaded 4-bit, `train_on_responses_only: enabled`, loss ~1.15→~1.0 over 15 steps, checkpoints written. Confirmed **1 GPU used** (Unsloth free) and **178 s/step** @ 8192 → drove the 4096/3000 revision above.
+- [ ] **Kaggle full run (next):** with the fixed data (~3000 @ 4096), run `--epochs 1 --push --merge-16bit`; verify checkpoint/resume once mid-run
 
 ## Phase 3 — Eval overhaul (fix the measurement) `[~]`
 - [x] `eval/diagnose_apps.py` written; **static autopsy done** (offline, no GPU):
@@ -140,3 +141,13 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
   `requirements/data.txt` (+transformers), `data/README.md`, `setup.md` (Kaggle
   git-clone flow). **NEXT: single Kaggle T4 x2 trial** — data prep → inspect rows →
   training smoke → (if green) full run + push. Then Phase 3 eval overhaul.
+- 2026-08-18 — **Kaggle trial run → plan revised (still Phase 1/2).** Smoke training
+  PASSED (loss drops, checkpoints write) but exposed hard constraints and data bugs:
+  (a) **Unsloth free = 1 T4 only**, 178 s/step @ 8192 → 10k@8192 ≈ 62h infeasible →
+  **revised to ~3000 examples @ 4096** (≈8–9h). (b) **split_0 has no apps/taco**
+  (verified via HF stats) and is source-clustered → the old allow-list yielded 100%
+  code_contests → **revised to all-platforms + per-source balancing**, deny-list
+  empty. (c) Fixed the sampler: cheap firewall/cap BEFORE the expensive parse,
+  `--max-scan` 1.5M. Both user decisions (compute plan; source mix) taken. Updated
+  prep + train defaults + all docs. **NEXT: re-run prep (fixed) + full training on
+  Kaggle**, then Phase 3.

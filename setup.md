@@ -54,21 +54,26 @@ os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
 
 ### 1.4 Build the v2 corpus (OpenCodeReasoning reasoning traces)
 Streams `nvidia/OpenCodeReasoning` (`split_0`), applies the firewall
-(`split=='train'` + allowed sources only), and writes ~10k reasoning-trace
-examples ≤ 8192 tokens each.
+(`split=='train'`; split_0 has no APPS/TACO so APPS-test can't leak), balances
+across platforms (codeforces / code_contests / atcoder / codechef / …), and writes
+**~3000** reasoning-trace examples **≤ 4096 tokens** each.
 ```bash
 !python data/prepare_reasoning_traces.py            # -> data/reasoning_train.jsonl
 ```
-Sanity-inspect a couple of rendered rows before training:
+The stream is clustered by source, so scanning is cheap but not instant; watch the
+`sources={...}` progress line to confirm multiple platforms are being collected.
+Sanity-inspect a few rendered rows before training:
 ```python
 import json
-rows = [json.loads(l) for l in open("data/reasoning_train.jsonl")][:2]
-for r in rows:
+rows = [json.loads(l) for l in open("data/reasoning_train.jsonl")]
+from collections import Counter
+print("sources:", Counter(r["source"] for r in rows))
+for r in rows[:3]:
     print(r["source"], r["difficulty"], r["n_tokens"])
     print(r["prompt"][:300]); print("---"); print(r["response"][:400]); print("=====")
 ```
-Confirm each `response` is `<think> …reasoning… </think>` + a fenced Python
-solution (NOT a golfed one-liner).
+Confirm a spread of sources and that each `response` is `<think> …reasoning… </think>`
++ a fenced Python solution (NOT a golfed one-liner).
 
 ### 1.5 Smoke test the training loop FIRST (the Kaggle trial run)
 Prove the loop end-to-end on a tiny slice before the full run:
@@ -85,9 +90,15 @@ dropping, an `outputs/checkpoint-*` written. If this passes, do the full run.
     --push --merge-16bit \
     --hf-username <user> --hf-repo qwen2.5-coder-7b-ocr-qlora
 ```
-Defaults are v2-tuned: `--max-seq-len 8192 --batch-size 1 --grad-accum 8 --lr 1e-4`
-(long sequences on a 16 GB T4; lower LR to curb forgetting). Use **Save Version →
-Save & Run All (Commit)** to run in the background.
+Defaults are v2-tuned: `--max-seq-len 4096 --batch-size 1 --grad-accum 8 --lr 1e-4`.
+
+> **Time budget (measured):** Unsloth's free tier trains on **one** T4 only (the
+> log shows `Num GPUs used = 1`), ~22 s/example at 8192 tokens and roughly half
+> that at 4096. So ~3000 examples × 1 epoch ≈ **8–9 h** — plan the session around
+> that and let it checkpoint. If it risks overrunning the 12 h cap, either lower
+> `--max-samples`/`--target` or resume in a second session with `--resume`.
+
+Use **Save Version → Save & Run All (Commit)** to run in the background.
 
 ### 1.7 Resume after a disconnect
 ```bash

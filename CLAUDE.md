@@ -106,17 +106,23 @@ scope for a free T4** beyond a tiny didactic run.
   v1→v2 ablation (only the DATA changes). Same recipe OpenCodeReasoning used to take
   a 7B to ~51% LCB. (DeepSeek-R1-Distill-Qwen-7B was the higher-ceiling alternative,
   not chosen — it would confound the ablation by changing base + data at once.)
-- **Data specifics (DECIDED 2026-08-18, with user):** OCR config **`split_0` only**
-  (question inline via `input`; avoids the `split_1` APPS/TACO join). Firewall =
-  **`split=='train'` AND source ∈ {apps, taco, code_contests, codeforces}**
-  (`ALLOWED_SOURCES` in `data/prepare_reasoning_traces.py`) → no APPS-test/valid
-  leakage. Subset **~10k examples @ `max_seq_len` 8192**. Each row = `{prompt,
-  response}` where `response` = `<think>…</think>` + one fenced ```python``` block;
-  training masks the prompt (loss on reasoning + code). Implemented in
-  `data/prepare_reasoning_traces.py` + `training/train_qlora.py`; v2 pushes to a
-  **distinct** Hub repo `qwen2.5-coder-7b-ocr-qlora` (v1 not overwritten).
-  **LCB caveat:** codeforces/code_contests can overlap LiveCodeBench's window →
-  enforce the LCB firewall at eval time (pin window post-OCR or decon by id).
+- **Data specifics (DECIDED 2026-08-18, with user; REVISED after the Kaggle trial):**
+  OCR config **`split_0` only** (question inline via `input`; avoids the split_1
+  APPS/TACO join). **Empirical:** split_0 has **no apps/taco** (they're in split_1)
+  and is clustered by source; its platforms are code_contests, codeforces, atcoder,
+  codechef, aizu, hackerearth, hackerrank, …. So the firewall is now
+  **`split=='train'`** (APPS-test can't leak — no APPS here) + an **empty
+  `EXCLUDE_SOURCES` deny-list** = train on **all platforms, balanced** by a
+  per-source cap (`--per-source-frac`, default 0.25). Cap/firewall checked BEFORE
+  the expensive parse so the clustered stream scans cheaply (`--max-scan` 1.5M).
+  **Trial findings that set the size:** Unsloth free uses **1 T4 only** (~22 s/ex
+  @ 8192) → 10k@8192 ≈ 62h, infeasible. Revised to **~3000 examples @ `max_seq_len`
+  4096** (≈8–9h, one session). Each row = `{prompt, response}`, `response` =
+  `<think>…</think>` + one fenced ```python``` block; training masks the prompt
+  (loss on reasoning + code). v2 pushes to a **distinct** repo
+  `qwen2.5-coder-7b-ocr-qlora` (v1 not overwritten). **LCB caveat:** every split_0
+  source is a live platform → enforce the LCB firewall at EVAL time (pin the LCB
+  window post-OCR, or decontaminate by id).
 - **Anti-forgetting:** lower LR (~1e-4), fewer steps, optionally mix in general
   instruction data; track a general-code sanity metric (below) to prove no
   regression.

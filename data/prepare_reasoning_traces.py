@@ -15,26 +15,29 @@ inline question -- it must be joined back to APPS/TACO, which pulls raw benchmar
 problems in and complicates the firewall).
 
 =======================  NON-NEGOTIABLE FIREWALL (CLAUDE.md 4)  =================
-OpenCodeReasoning is NOT documented as decontaminated, and it sources questions
-from apps / taco / code_contests / codeforces / leetcode / atcoder / ... . Our
-held-out eval is APPS-*test* (and LiveCodeBench, eval-only). To keep training and
-eval physically separate we apply TWO filters, both mandatory:
+Empirical fact (verified 2026-08-18): OCR **split_0 contains NO apps and NO taco
+rows** -- those sources live in split_1 (their questions must be joined back to
+the original APPS/TACO datasets). split_0's sources are live competitive
+platforms: code_contests, codeforces, atcoder, codechef, aizu, hackerearth,
+hackerrank, ... . Consequences:
 
-  1. split == "train"     -> drops every APPS-test / TACO-test / *-valid problem.
-                             (The `split` field records the source dataset's own
-                             partition, so test/valid problems are excluded here.)
-  2. dataset in ALLOWED_SOURCES (below) -> restrict to the "static benchmark"
-                             sources agreed for v2 (apps/taco/code_contests/
-                             codeforces). Edit this ONE constant to change policy.
+  * The APPS-*test* firewall is AUTOMATICALLY satisfied here -- there is no APPS
+    data in split_0 to leak. We still apply `split == "train"` as belt-and-braces
+    (drops any source's *-test/*-valid partition).
+  * We train on ALL split_0 platforms, balanced by a per-source cap so no single
+    platform dominates (the first version wrongly restricted to apps/taco/
+    code_contests/codeforces, which in split_0 meant *only* code_contests).
+  * `EXCLUDE_SOURCES` (below) is the deny-list knob -- empty by default.
 
-APPS-*train* problems (disjoint from APPS-*test*) ARE allowed -- v1 trained on
-them too; only APPS-*test* is held out.
+Two mandatory filters remain:
+  1. split == "train"            -> drops any *-test / *-valid partition.
+  2. dataset not in EXCLUDE_SOURCES.
 
-LiveCodeBench caveat (for Phase 3): `codeforces`/`code_contests` problems can
-overlap LiveCodeBench's recent window. Before trusting the LCB headline, pin the
-LCB version window to dates that POST-DATE this corpus, or decontaminate LCB by
-problem id. This script's job is only the APPS/test firewall; the LCB firewall is
-enforced at eval time by the window choice.
+LiveCodeBench caveat (for Phase 3): every split_0 source is a live platform, so
+codeforces/atcoder/code_contests problems CAN overlap LiveCodeBench's recent
+window. This script does NOT try to solve that; the LCB firewall is enforced at
+EVAL time -- pin the LCB version window to dates that POST-DATE this corpus, or
+decontaminate LCB by problem id. (LCB is never trained on regardless.)
 ================================================================================
 
 Output (default): data/reasoning_train.jsonl -- one JSON object per example:
@@ -65,10 +68,10 @@ from collections import Counter
 OCR_DATASET = "nvidia/OpenCodeReasoning"
 OCR_CONFIG = "split_0"
 
-# --- FIREWALL: the ONLY sources we train on. Editing this changes the policy. ---
-# Decision (2026-08-17): "train-split + static sources only" -- keeps the APPS-test
-# firewall airtight while retaining the bulk of the high-quality reasoning traces.
-ALLOWED_SOURCES = {"apps", "taco", "code_contests", "codeforces"}
+# --- FIREWALL deny-list. split_0 has no apps/taco anyway (see header); empty by
+# default so we train on ALL split_0 platforms, balanced via --per-source-frac.
+# Add e.g. {"codeforces"} here to drop a specific platform. ---
+EXCLUDE_SOURCES: set[str] = set()
 
 # Instruction wrapper. MUST match the eval-time prompt so the model is on-
 # distribution at test time (v1's biggest silent bug was a train/eval prompt
@@ -138,17 +141,21 @@ def extract_code(solution: str, output: str) -> str | None:
     return None
 
 
-def build_example(row) -> dict | None:
-    """Apply the firewall + parse one row into an SFT record (or None to skip)."""
+def firewall_source(row) -> str | None:
+    """CHEAP gate (no regex/tokenize): return the lower-cased source if the row
+    passes the firewall, else None. Kept separate so the per-source cap can be
+    checked BEFORE the expensive parse -- split_0 is clustered by source, so we
+    skip millions of over-cap rows without paying to parse their huge `output`."""
+    if str(row.get("split", "")).strip().lower() != "train":
+        return None
     source = str(row.get("dataset", "")).strip().lower()
-    split = str(row.get("split", "")).strip().lower()
-
-    # --- FIREWALL (both conditions mandatory) ---
-    if split != "train":
+    if not source or source in EXCLUDE_SOURCES:
         return None
-    if source not in ALLOWED_SOURCES:
-        return None
+    return source
 
+
+def parse_row(row, source: str) -> dict | None:
+    """EXPENSIVE step: extract the reasoning + code and build the SFT record."""
     question = (row.get("input") or "").strip()
     if not question:
         return None  # split_1-style rows (no inline question) are not used
@@ -206,26 +213,35 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--output", default=os.path.join("data", "reasoning_train.jsonl"))
-    p.add_argument("--target", type=int, default=10000,
-                   help="How many examples to write (default: 10000).")
-    p.add_argument("--max-seq-len", type=int, default=8192,
+    p.add_argument("--target", type=int, default=3000,
+                   help="How many examples to write (default: 3000 -- fits ~1 "
+                        "T4 session at seq_len 4096).")
+    p.add_argument("--max-seq-len", type=int, default=4096,
                    help="Drop examples whose full chat length exceeds this "
-                        "(default: 8192 -- matches training).")
-    p.add_argument("--per-source-frac", type=float, default=0.4,
+                        "(default: 4096 -- matches training; 8192 keeps longer "
+                        "traces but ~2x slower to train).")
+    p.add_argument("--per-source-frac", type=float, default=0.25,
                    help="Cap any single source at this fraction of --target "
-                        "(default: 0.4). Set 1.0 to disable.")
+                        "(default: 0.25 -> at least ~4 platforms contribute). "
+                        "Set 1.0 to disable balancing.")
     p.add_argument("--no-token-filter", action="store_true",
                    help="Skip loading the tokenizer; use a char-length proxy.")
     p.add_argument("--shuffle-buffer", type=int, default=10000,
-                   help="Streaming shuffle buffer (0 = no shuffle).")
+                   help="Streaming shuffle buffer for WITHIN-source variety "
+                        "(0 = no shuffle). Cross-source mixing comes from the "
+                        "per-source cap + full scan, not this buffer.")
     p.add_argument("--seed", type=int, default=3407)
-    p.add_argument("--max-scan", type=int, default=400000,
-                   help="Safety cap on rows scanned before giving up.")
+    p.add_argument("--max-scan", type=int, default=1_500_000,
+                   help="Safety cap on rows scanned. Default covers all of "
+                        "split_0 (~568k) so late-in-stream platforms are reached.")
     args = p.parse_args()
 
     print("=" * 70)
-    print(" OpenCodeReasoning -> v2 SFT corpus (reasoning traces).")
-    print(f" Firewall: split=='train' AND source in {sorted(ALLOWED_SOURCES)}.")
+    print(" OpenCodeReasoning split_0 -> v2 SFT corpus (reasoning traces).")
+    excl = sorted(EXCLUDE_SOURCES) or "(none)"
+    print(f" Firewall: split=='train'; excluded sources: {excl}.")
+    print(f" Target {args.target} @ <= {args.max_seq_len} tok; "
+          f"per-source cap {args.per_source_frac:g} of target.")
     print("=" * 70)
 
     length_of = make_length_fn(args.max_seq_len, use_tokenizer=not args.no_token_filter)
@@ -249,15 +265,20 @@ def main() -> None:
                 print(f"Hit --max-scan={args.max_scan}; stopping early.")
                 break
 
-            rec = build_example(row)
-            if rec is None:
-                skipped["firewall_or_parse"] += 1
+            # --- CHEAP checks first (no regex / no tokenizer) ---
+            source = firewall_source(row)
+            if source is None:
+                skipped["firewall"] += 1
                 continue
-
-            if source_counts[rec["source"]] >= per_source_cap:
+            if source_counts[source] >= per_source_cap:
                 skipped["source_cap"] += 1
                 continue
 
+            # --- EXPENSIVE: parse reasoning/code, then tokenize-length filter ---
+            rec = parse_row(row, source)
+            if rec is None:
+                skipped["no_reasoning_or_code"] += 1
+                continue
             n_tok = length_of(rec["prompt"], rec["response"])
             if n_tok > args.max_seq_len:
                 skipped["too_long"] += 1
@@ -266,7 +287,7 @@ def main() -> None:
             rec["n_tokens"] = n_tok
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             n_written += 1
-            source_counts[rec["source"]] += 1
+            source_counts[source] += 1
             difficulty_counts[str(rec["difficulty"]).lower()] += 1
 
             if n_written % 500 == 0:

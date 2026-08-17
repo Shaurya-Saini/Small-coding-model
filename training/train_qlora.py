@@ -14,9 +14,13 @@ configurable (--prompt-field / --response-field) so the same script still handle
 the v1 {prompt, solution} format.
 
 Why the v2 defaults differ from v1 (see CLAUDE.md 3):
-  * --max-seq-len 8192  -- reasoning traces are long; v1's 2048 would truncate them.
-  * --batch-size 1 --grad-accum 8 -- 8192-token sequences are ~4x v1's VRAM; batch 1
-    keeps a 16 GB T4 from OOMing while grad-accum keeps the effective batch at 8.
+  * --max-seq-len 4096  -- reasoning traces are long (v1's 2048 truncates them),
+    but Unsloth free uses only ONE T4 (~22 s/example at 8192 in trials), so 8192 x
+    10k examples ~= 62h is infeasible. 4096 keeps most complete traces and fits a
+    ~3000-example, ~1-epoch run in one ~9h Kaggle session. Pass --max-seq-len 8192
+    (with fewer --max-samples) if you want the longest traces intact.
+  * --batch-size 1 --grad-accum 8 -- validated config; keeps a 16 GB T4 off OOM
+    while holding the effective batch at 8.
   * --lr 1e-4 (was 2e-4) -- lower LR + one pass to reduce catastrophic forgetting.
 
 RULES (see CLAUDE.md 4): trains on whatever is in --data. That file must be the
@@ -65,9 +69,9 @@ def parse_args() -> argparse.Namespace:
                         "(reasoning+code); v1: 'solution' (code only).")
     p.add_argument("--model-name", default=DEFAULT_MODEL)
     p.add_argument("--output-dir", default="outputs")
-    p.add_argument("--max-seq-len", type=int, default=8192,
-                   help="Reasoning traces are long; 8192 keeps them intact "
-                        "(v1 used 2048).")
+    p.add_argument("--max-seq-len", type=int, default=4096,
+                   help="Match the data prep. 4096 fits a ~3000-example run in "
+                        "one T4 session; 8192 keeps longer traces but ~2x slower.")
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap training rows (smoke test).")
     # LoRA
