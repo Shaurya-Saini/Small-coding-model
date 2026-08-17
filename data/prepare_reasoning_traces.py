@@ -15,34 +15,36 @@ inline question -- it must be joined back to APPS/TACO, which pulls raw benchmar
 problems in and complicates the firewall).
 
 =======================  NON-NEGOTIABLE FIREWALL (CLAUDE.md 4)  =================
-Empirical fact (verified 2026-08-18): OCR **split_0 contains NO apps and NO taco
-rows** -- those sources live in split_1 (their questions must be joined back to
-the original APPS/TACO datasets). split_0's sources are live competitive
-platforms: code_contests, codeforces, atcoder, codechef, aizu, hackerearth,
-hackerrank, ... . Consequences:
+Empirical fact (verified 2026-08-18 by a FULL 567,850-row scan): OCR **split_0's
+`split=='train'` partition is effectively `code_contests` ONLY.** No apps/taco
+(they're in split_1, needing an APPS/TACO join), and the other platforms the HF
+statistics API hinted at (codeforces/atcoder/...) do NOT survive the train filter
+here -- the ~39k non-code_contests rows are all *-valid/*-test and are correctly
+dropped. So cross-platform balancing is impossible from split_0; we simply take
+the target count from code_contests (a strong AGGREGATED competitive source:
+DeepMind CodeContests = Codeforces/AtCoder/CodeChef/... problems). Consequences:
 
-  * The APPS-*test* firewall is AUTOMATICALLY satisfied here -- there is no APPS
-    data in split_0 to leak. We still apply `split == "train"` as belt-and-braces
-    (drops any source's *-test/*-valid partition).
-  * We train on ALL split_0 platforms, balanced by a per-source cap so no single
-    platform dominates (the first version wrongly restricted to apps/taco/
-    code_contests/codeforces, which in split_0 meant *only* code_contests).
+  * The APPS-*test* firewall is AUTOMATICALLY satisfied -- no APPS data in split_0.
+  * `--per-source-frac` defaults to 1.0 (no balancing) because there is only one
+    viable source. It stays a knob in case a future OCR revision adds platforms.
   * `EXCLUDE_SOURCES` (below) is the deny-list knob -- empty by default.
+  * (Want true multi-platform diversity? That needs split_1 + the APPS/TACO join
+    -- deferred to v2.1; see V2_PROGRESS.md.)
 
 Two mandatory filters remain:
   1. split == "train"            -> drops any *-test / *-valid partition.
   2. dataset not in EXCLUDE_SOURCES.
 
-LiveCodeBench caveat (for Phase 3): every split_0 source is a live platform, so
-codeforces/atcoder/code_contests problems CAN overlap LiveCodeBench's recent
-window. This script does NOT try to solve that; the LCB firewall is enforced at
-EVAL time -- pin the LCB version window to dates that POST-DATE this corpus, or
-decontaminate LCB by problem id. (LCB is never trained on regardless.)
+LiveCodeBench caveat (for Phase 3): code_contests is a live-platform aggregate, so
+its problems CAN overlap LiveCodeBench's recent window. This script does NOT try
+to solve that; the LCB firewall is enforced at EVAL time -- pin the LCB version
+window to dates that POST-DATE this corpus, or decontaminate LCB by problem id.
+(LCB is never trained on regardless.)
 ================================================================================
 
 Output (default): data/reasoning_train.jsonl -- one JSON object per example:
     id         : OpenCodeReasoning row id
-    source     : originating dataset (apps | taco | code_contests | codeforces)
+    source     : originating dataset (in practice: code_contests -- see header)
     difficulty : raw source difficulty label (kept as-is; not normalized)
     prompt     : instruction + problem statement (user turn, pre chat-template)
     response   : assistant target -> "<think>\\n{reasoning}\\n</think>\\n\\n
@@ -220,10 +222,11 @@ def main() -> None:
                    help="Drop examples whose full chat length exceeds this "
                         "(default: 4096 -- matches training; 8192 keeps longer "
                         "traces but ~2x slower to train).")
-    p.add_argument("--per-source-frac", type=float, default=0.25,
-                   help="Cap any single source at this fraction of --target "
-                        "(default: 0.25 -> at least ~4 platforms contribute). "
-                        "Set 1.0 to disable balancing.")
+    p.add_argument("--per-source-frac", type=float, default=1.0,
+                   help="Cap any single source at this fraction of --target. "
+                        "Default 1.0 = no balancing: split_0's train partition is "
+                        "code_contests-only, so there is nothing to balance. Lower "
+                        "it only if a future OCR revision adds platforms.")
     p.add_argument("--no-token-filter", action="store_true",
                    help="Skip loading the tokenizer; use a char-length proxy.")
     p.add_argument("--shuffle-buffer", type=int, default=10000,

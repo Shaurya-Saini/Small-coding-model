@@ -21,41 +21,43 @@ row is `{id, source, difficulty, prompt, response, n_tokens}`, where `response` 
 `<think> reasoning </think>` followed by a single fenced Python solution. Training
 computes loss on `response` (reasoning **and** code); the prompt is masked.
 
-**Empirical fact (verified 2026-08-18):** split_0 has **no `apps` and no `taco`**
-rows (those are in split_1 and need a join). Its sources are live competitive
-platforms — `code_contests`, `codeforces`, `atcoder`, `codechef`, `aizu`,
-`hackerearth`, `hackerrank`, … — and it is **clustered by source** (code_contests
-fills the front of the stream).
+**Empirical fact (verified 2026-08-18 by a full 567k-row scan):** split_0's
+`split=='train'` partition is effectively **`code_contests` only** — DeepMind's
+CodeContests aggregate (Codeforces / AtCoder / CodeChef problems, so there's still
+cross-judge variety within it). There is **no `apps`/`taco`** (those are in split_1
+and need a join → deferred to v2.1), and the other platforms the HF stats API
+hinted at do not survive the train filter. So cross-platform balancing isn't
+possible here; we take `--target` examples from code_contests.
 
-**Firewall + balancing:**
-1. `split == "train"` — belt-and-braces (drops any `*-test`/`*-valid` partition).
-   The APPS-test firewall is **automatic** here: there is no APPS data in split_0.
-2. `dataset ∉ EXCLUDE_SOURCES` — deny-list constant, **empty by default** (train on
-   all platforms). The cap check runs *before* the expensive parse, so the
-   clustered stream is scanned cheaply.
-3. `--per-source-frac` caps each platform at a fraction of `--target` so no single
-   source dominates (the earlier version wrongly produced 100% code_contests).
+**Firewall:**
+1. `split == "train"` — drops any `*-test`/`*-valid` partition. The APPS-test
+   firewall is **automatic**: there is no APPS data in split_0.
+2. `dataset ∉ EXCLUDE_SOURCES` — deny-list constant, **empty by default**.
+3. `--per-source-frac` defaults to **1.0 (no balancing)** — one viable source. The
+   cheap firewall/cap check runs *before* the expensive parse, and collection stops
+   as soon as `--target` is hit (code_contests is front-loaded), so a run is fast.
 
-> **LiveCodeBench caveat (Phase 3):** every split_0 source is a live platform, so
-> codeforces/atcoder/code_contests problems can overlap LiveCodeBench's recent
-> window. This is NOT handled here — the LCB firewall is enforced at **eval** time
-> by pinning the LCB window to dates that post-date this corpus (or decontaminating
-> LCB by problem id). LCB is never trained on.
+> **LiveCodeBench caveat (Phase 3):** code_contests is a live-platform aggregate,
+> so its problems can overlap LiveCodeBench's recent window. This is NOT handled
+> here — the LCB firewall is enforced at **eval** time by pinning the LCB window to
+> dates that post-date this corpus (or decontaminating by problem id). LCB is never
+> trained on.
 
 ```bash
 pip install -r ../requirements/data.txt
 
-# v2 corpus: ~3000 examples, each ≤ 4096 tokens, balanced across platforms
+# v2 corpus: ~3000 code_contests examples, each ≤ 4096 tokens
 python prepare_reasoning_traces.py                 # -> data/reasoning_train.jsonl
 
 # Quick smoke (few hundred rows; no tokenizer download)
 python prepare_reasoning_traces.py --target 200 --no-token-filter
 ```
 
-Key flags: `--target` (subset size, default 3000), `--max-seq-len` (token cap,
-default 4096 — match training), `--per-source-frac` (per-source cap, default
-0.25), `--no-token-filter` (char proxy instead of the Qwen tokenizer), `--max-scan`
-(default 1.5M — covers all of split_0 so late-in-stream platforms are reached).
+Key flags: `--target` (subset size, default 3000; use 2500 for a safer session
+margin), `--max-seq-len` (token cap, default 4096 — match training),
+`--per-source-frac` (default 1.0 = no balancing), `--no-token-filter` (char proxy
+instead of the Qwen tokenizer), `--max-scan` (default 1.5M — safety cap; only
+reached if `--target` can't be filled).
 
 ## v1 — APPS (superseded, kept for reproducibility)
 

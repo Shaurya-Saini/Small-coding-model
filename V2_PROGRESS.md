@@ -141,6 +141,16 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
   `requirements/data.txt` (+transformers), `data/README.md`, `setup.md` (Kaggle
   git-clone flow). **NEXT: single Kaggle T4 x2 trial** — data prep → inspect rows →
   training smoke → (if green) full run + push. Then Phase 3 eval overhaul.
+- 2026-08-18 — **2nd Kaggle run → split_0 is code_contests-only for train.** A full
+  567,850-row scan showed the `split=='train'` partition yields ONLY `code_contests`
+  (DeepMind CodeContests aggregate); the HF-stats hint of diverse platforms was
+  wrong (other platforms are *-valid/*-test → firewalled). "All-platforms balanced"
+  is impossible from split_0. Fix: `--per-source-frac` default → **1.0** (no
+  balancing); take ~3000 from code_contests (collection stops early → fast). Data
+  is clean (0 too_long, 0 no-reasoning in the sample; ~92 s/step @ 4096). True
+  multi-dataset diversity (apps/taco) → **v2.1** via the split_1 join. Docs
+  (setup/data-README/CLAUDE) corrected. **NEXT: re-run prep (expect 3000), full
+  training + push.**
 - 2026-08-18 — **Kaggle trial run → plan revised (still Phase 1/2).** Smoke training
   PASSED (loss drops, checkpoints write) but exposed hard constraints and data bugs:
   (a) **Unsloth free = 1 T4 only**, 178 s/step @ 8192 → 10k@8192 ≈ 62h infeasible →

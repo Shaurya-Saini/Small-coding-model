@@ -53,35 +53,51 @@ os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
 ```
 
 ### 1.4 Build the v2 corpus (OpenCodeReasoning reasoning traces)
-Streams `nvidia/OpenCodeReasoning` (`split_0`), applies the firewall
-(`split=='train'`; split_0 has no APPS/TACO so APPS-test can't leak), balances
-across platforms (codeforces / code_contests / atcoder / codechef / …), and writes
-**~3000** reasoning-trace examples **≤ 4096 tokens** each.
+Streams `nvidia/OpenCodeReasoning` (`split_0`) and writes **~3000** reasoning-trace
+examples **≤ 4096 tokens** each to `data/reasoning_train.jsonl`.
+
+> **What's actually in split_0 (verified by a full 567k-row scan):** its
+> `split=='train'` partition is effectively **`code_contests` only** — DeepMind's
+> aggregate of Codeforces / AtCoder / CodeChef problems (so you still get
+> cross-judge variety), each with a DeepSeek-R1 reasoning trace. There is **no
+> APPS/TACO here** (they're in split_1, which needs a join — deferred to v2.1), and
+> the other platforms don't survive the train filter. So `--per-source-frac`
+> defaults to **1.0 (no balancing)** — there's a single source to draw from. The
+> APPS-test firewall is automatically satisfied (no APPS data present).
+
 ```bash
-!python data/prepare_reasoning_traces.py            # -> data/reasoning_train.jsonl
+# Chosen size: 2500 examples (~8 h train — comfortable margin under the 12 h cap).
+!python data/prepare_reasoning_traces.py --target 2500   # -> data/reasoning_train.jsonl
+# Alternatives: omit --target for the default 3000 (~9.6 h); --target 200 for a smoke.
 ```
-The stream is clustered by source, so scanning is cheap but not instant; watch the
-`sources={...}` progress line to confirm multiple platforms are being collected.
-Sanity-inspect a few rendered rows before training:
+`--target` lives on the **data-prep** step (it sets how many rows are written).
+The **training** step then uses whatever is in the file — no size flag needed there
+(don't confuse it with training's `--max-samples`, which only *caps* rows for a
+smoke). Because `code_contests` is front-loaded in the stream, collection **stops
+early** once `--target` is reached (~1–2 min) — you will NOT see a full 567k-row
+scan. Confirm the summary prints `examples written : 2500` (not 750). Then
+sanity-inspect a few rendered rows:
 ```python
 import json
-rows = [json.loads(l) for l in open("data/reasoning_train.jsonl")]
 from collections import Counter
-print("sources:", Counter(r["source"] for r in rows))
+rows = [json.loads(l) for l in open("data/reasoning_train.jsonl")]
+print("count:", len(rows), "| sources:", Counter(r["source"] for r in rows),
+      "| tokens:", min(r["n_tokens"] for r in rows), "-", max(r["n_tokens"] for r in rows))
 for r in rows[:3]:
     print(r["source"], r["difficulty"], r["n_tokens"])
     print(r["prompt"][:300]); print("---"); print(r["response"][:400]); print("=====")
 ```
-Confirm a spread of sources and that each `response` is `<think> …reasoning… </think>`
-+ a fenced Python solution (NOT a golfed one-liner).
+Confirm each `response` is `<think> …reasoning… </think>` + a fenced Python solution
+(reasoning + clean code, NOT a golfed one-liner).
 
-### 1.5 Smoke test the training loop FIRST (the Kaggle trial run)
-Prove the loop end-to-end on a tiny slice before the full run:
+### 1.5 Smoke test the training loop FIRST (optional — already validated once)
+The loop is already proven end-to-end (loss drops, checkpoints write). Re-run this
+only if you changed the stack:
 ```bash
 !python training/train_qlora.py --max-samples 300 --max-steps 15 --save-steps 10
 ```
 Expect: model loads in 4-bit, `train_on_responses_only: enabled`, loss logged and
-dropping, an `outputs/checkpoint-*` written. If this passes, do the full run.
+dropping, an `outputs/checkpoint-*` written.
 
 ### 1.6 Full run + push to the Hub
 ```bash
@@ -92,13 +108,38 @@ dropping, an `outputs/checkpoint-*` written. If this passes, do the full run.
 ```
 Defaults are v2-tuned: `--max-seq-len 4096 --batch-size 1 --grad-accum 8 --lr 1e-4`.
 
-> **Time budget (measured):** Unsloth's free tier trains on **one** T4 only (the
-> log shows `Num GPUs used = 1`), ~22 s/example at 8192 tokens and roughly half
-> that at 4096. So ~3000 examples × 1 epoch ≈ **8–9 h** — plan the session around
-> that and let it checkpoint. If it risks overrunning the 12 h cap, either lower
-> `--max-samples`/`--target` or resume in a second session with `--resume`.
+> **Time budget (measured on this exact setup):** Unsloth's free tier trains on
+> **one** T4 only (`Num GPUs used = 1`), at **~92 s/step** @ 4096 tokens (≈ half of
+> 8192's 178 s/step). Effective batch 8 → one step per 8 examples. So:
+> - **3000 examples** ≈ 375 steps ≈ **9.6 h train**, + model load + the final
+>   16-bit merge/upload ≈ **~10 h total**. Fits the 12 h commit cap, modest margin.
+> - **2500 examples** ≈ 313 steps ≈ **8 h train** (~8.5 h total) — safer margin,
+>   recommended if you want the push to complete comfortably in one session.
+>
+> `--save-steps 50` checkpoints throughout, so a timeout is recoverable with
+> `--resume` (§1.7). The LoRA adapter is also saved locally before the push.
 
-Use **Save Version → Save & Run All (Commit)** to run in the background.
+### 1.6a Interactive vs. committed run — which to use
+
+Do BOTH, in this order:
+
+1. **Interactive first (a few minutes), as a pre-flight — not the full train.**
+   With the notebook open interactively, run the install → clone → HF-token → data
+   prep cells, confirm `examples written : 2500`, then start training and watch the
+   **first 2–3 steps**: you want `Num GPUs used = 1`, `train_on_responses_only:
+   enabled`, loss printing, and **~90 s/step** with no CUDA OOM. Once those look
+   right, **interrupt/stop** — don't babysit 8 h in an interactive tab.
+2. **Then Save Version → Save & Run All (Commit) for the real 8 h run.** A committed
+   run executes the whole notebook headless, survives you closing the browser, and
+   saves `outputs/` + logs as a version. An **interactive** session can die on
+   disconnect/idle and would lose the run — so the long train MUST be a commit.
+
+Notes for the committed run:
+- The commit re-runs every cell from scratch, so it re-does data prep (~2 min) and
+  training in order — that's fine and fully reproducible.
+- **Internet = on** and the **`HF_TOKEN` secret** must be enabled for the committed
+  session (Notebook settings), or the OCR stream and the `--push` will fail.
+- Check progress under the notebook's **Logs** tab while it runs.
 
 ### 1.7 Resume after a disconnect
 ```bash

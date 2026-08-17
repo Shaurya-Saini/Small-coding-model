@@ -108,13 +108,14 @@ scope for a free T4** beyond a tiny didactic run.
   not chosen — it would confound the ablation by changing base + data at once.)
 - **Data specifics (DECIDED 2026-08-18, with user; REVISED after the Kaggle trial):**
   OCR config **`split_0` only** (question inline via `input`; avoids the split_1
-  APPS/TACO join). **Empirical:** split_0 has **no apps/taco** (they're in split_1)
-  and is clustered by source; its platforms are code_contests, codeforces, atcoder,
-  codechef, aizu, hackerearth, hackerrank, …. So the firewall is now
-  **`split=='train'`** (APPS-test can't leak — no APPS here) + an **empty
-  `EXCLUDE_SOURCES` deny-list** = train on **all platforms, balanced** by a
-  per-source cap (`--per-source-frac`, default 0.25). Cap/firewall checked BEFORE
-  the expensive parse so the clustered stream scans cheaply (`--max-scan` 1.5M).
+  APPS/TACO join). **Empirical (full 567k-row scan):** split_0's `split=='train'`
+  partition is effectively **`code_contests` only** (DeepMind CodeContests =
+  Codeforces/AtCoder/CodeChef aggregate; still cross-judge variety). No apps/taco
+  (split_1, needs a join → v2.1); other platforms don't survive the train filter.
+  So the firewall is **`split=='train'`** (APPS-test can't leak — no APPS here) +
+  empty `EXCLUDE_SOURCES`, and **`--per-source-frac` defaults to 1.0 (no balancing
+  — one viable source)**. Firewall/cap checked BEFORE the expensive parse; collection
+  stops at `--target` (code_contests is front-loaded) so a run is fast.
   **Trial findings that set the size:** Unsloth free uses **1 T4 only** (~22 s/ex
   @ 8192) → 10k@8192 ≈ 62h, infeasible. Revised to **~3000 examples @ `max_seq_len`
   4096** (≈8–9h, one session). Each row = `{prompt, response}`, `response` =
