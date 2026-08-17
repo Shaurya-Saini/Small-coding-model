@@ -20,7 +20,7 @@ window.
 | D1 | **Base model** | (a) keep Qwen2.5-Coder-7B-Instruct · (b) DeepSeek-R1-Distill-Qwen-7B | **DECIDED (a):** keep Qwen2.5-Coder-7B-Instruct — cleanest v1→v2 ablation (only the DATA changes: golfed solutions → reasoning traces), same OpenCodeReasoning recipe that took a 7B to ~51% LCB. | `[x]` |
 | D2 | **Eval: keep or drop APPS** | (a) demote to sanity · (b) drop · (c) keep as co-headline | **DECIDED (c):** keep APPS (now scored by `score_apps.py`) AND add LCB, as co-headlines. | `[x]` |
 | D3 | **Eval precision** | bf16 headline + 4-bit column · vs · 4-bit only | **DECIDED (split):** the APPS v1→v2 continuity table stays **4-bit** (matches the saved v1 generations, apples-to-apples); the **LiveCodeBench** headline + frontier comparison runs **bf16** (don't cripple our model vs full-precision APIs). | `[x]` |
-| D4 | **RL stretch goal** | tiny GRPO+QLoRA · vs · SFT-only | **DECIDED:** SFT-only for the real v2 result. GRPO+QLoRA only as an optional didactic experiment if time allows — a full RL run needs a datacenter (DeepCoder = 32×H100 × 2.5 wks). | `[x]` |
+| D4 | **RL: when?** | in v2 · vs · later | **DECIDED:** RL is **v3, conditional** — attempt only if v2's SFT underperforms/plateaus near the distillation ceiling; skippable if v2 succeeds. v2 is SFT-only. Rationale: SFT is capped by the R1 teacher; RL (ground-truth rewards) is the only lever past that ceiling. See `CLAUDE.md §3` v3 subsection. | `[x]` |
 
 **Eval approach (DECIDED):** diagnose v1 first, then rebuild. Outcome: v1 harness
 scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
@@ -50,19 +50,23 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
 - [x] Resolve D1–D4 (all decided 2026-08-17 — see table)
 - [x] Correct & re-publish v1 results (scores.json, report.md, figures, README, CLAUDE.md, setup.md)
 
-## Phase 1 — Data (fix root cause #1) `[ ]`  ← NEXT SESSION STARTS HERE
+## Phase 1 — Data (fix root cause #1) `[~]`  ← code done; validate in the Kaggle trial
 - [x] Dataset chosen: **OpenCodeReasoning** (Python reasoning traces); base stays Qwen2.5-Coder-7B-Instruct (D1)
-- [ ] Decide subset size that fits a free T4 session (~10–20k traces) + max_seq_len (~4–8k)
-- [ ] Write `data/prepare_reasoning_traces.py` (Parquet loader; keep `parse_int=str` guard) → `data/*_train.jsonl`
-- [ ] Format each example as `problem → <think> trace </think> → clean solution` inside the chat template
-- [ ] Sanity: inspect 10 rendered training samples; confirm targets are *reasoning + clean code*, not golfed one-liners
-- [ ] Keep the three-dataset firewall: training data ≠ APPS-test ≠ LiveCodeBench (never share a file/variable)
+- [x] **Decided: config `split_0` only** (question inline via `input`; no APPS/TACO join, unlike `split_1`)
+- [x] **Decided: subset ~10k examples, `max_seq_len` 8192** (keeps traces intact vs truncating; ~2.5–4h on T4 x2)
+- [x] **Decided: firewall = `split=='train'` AND source ∈ {apps, taco, code_contests, codeforces}** (`ALLOWED_SOURCES` constant) — kills APPS-test/valid leakage; LCB overlap deferred to eval-window choice (Phase 3)
+- [x] Wrote `data/prepare_reasoning_traces.py` (streams split_0; firewall; reconstructs `<think>…</think>` + clean ```python``` fence; exact Qwen-tokenizer length filter w/ char-proxy fallback; per-source cap + buffered shuffle)
+- [x] Format = `problem → <think> trace </think> → clean solution` written to `data/reasoning_train.jsonl` as `{prompt, response}`; training masks everything before the assistant turn
+- [x] Firewall enforced in code + unit-tested offline (test-split / disallowed-source / no-think / no-input all correctly skipped)
+- [ ] **Kaggle trial:** inspect ~10 *real* rendered rows (needs the HF stream); confirm targets are reasoning + clean code, not golfed one-liners
+- [x] Three-dataset firewall preserved: separate script/output; APPS-test & LiveCodeBench never touched
 
-## Phase 2 — Training (fix root cause #2) `[ ]`
-- [ ] Adapt `training/train_qlora.py` (same Unsloth+QLoRA+SFTTrainer stack; prompt-masking on the trace region)
-- [ ] Anti-forgetting knobs: LR ~1e-4, fewer steps, optional general-instruction mix
-- [ ] Checkpoint aggressively (free Kaggle sessions die); resume tested
-- [ ] Push merged 16-bit + LoRA adapter to HF Hub (tokenizer pushed separately — see `CLAUDE.md §8`)
+## Phase 2 — Training (fix root cause #2) `[~]`  ← code done; validate in the Kaggle trial
+- [x] Adapted `training/train_qlora.py` (same Unsloth+QLoRA+SFTTrainer stack; configurable `--prompt-field`/`--response-field`; `train_on_responses_only` masks the prompt so loss covers the reasoning + code)
+- [x] Anti-forgetting defaults: `--lr 1e-4`, 1 epoch; long-seq T4 defaults `--max-seq-len 8192 --batch-size 1 --grad-accum 8` (effective batch 8)
+- [x] Aggressive checkpointing carried over (save_steps/save_total_limit, `--resume`); **resume to be re-tested in the Kaggle trial**
+- [x] Push path updated to a **distinct** v2 repo `qwen2.5-coder-7b-ocr-qlora` (v1 model not overwritten); merged-16bit + adapter + tokenizer push logic unchanged (see `CLAUDE.md §8`)
+- [ ] **Kaggle trial:** run the smoke (`--max-samples 300 --max-steps 15`), confirm loss drops + checkpoint written, then the full run + push
 
 ## Phase 3 — Eval overhaul (fix the measurement) `[~]`
 - [x] `eval/diagnose_apps.py` written; **static autopsy done** (offline, no GPU):
@@ -123,3 +127,16 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
   + corrected observations/conclusions/next-steps; setup.md eval steps rewritten to
   use `score_apps.py`; v2 design notes recorded. **NEXT SESSION: Phase 1** — pick
   OpenCodeReasoning subset size + write `data/prepare_reasoning_traces.py`.
+- 2026-08-18 — **Repo reorganized:** v1 frozen into `Version 1.0/` (proof of work +
+  self-contained reproduction, own README); repo root is now the v2 dev tree; root
+  `README.md` rewritten as combined v1+v2 documentation.
+- 2026-08-18 — **Phase 1 + Phase 2 code complete (pending one Kaggle trial).** Three
+  data decisions taken with the user: (1) OCR config `split_0` only; (2) firewall =
+  `split=='train'` + sources {apps,taco,code_contests,codeforces}; (3) ~10k examples
+  @ seq_len 8192. Wrote `data/prepare_reasoning_traces.py` (streaming loader, firewall,
+  `<think>`+fenced-code reconstruction, exact-tokenizer length filter) — parsing/firewall
+  unit-tested offline. Adapted `training/train_qlora.py` to v2 (`{prompt,response}`,
+  seq_len 8192, batch 1 / grad-accum 8, lr 1e-4, distinct v2 Hub repo). Updated
+  `requirements/data.txt` (+transformers), `data/README.md`, `setup.md` (Kaggle
+  git-clone flow). **NEXT: single Kaggle T4 x2 trial** — data prep → inspect rows →
+  training smoke → (if green) full run + push. Then Phase 3 eval overhaul.

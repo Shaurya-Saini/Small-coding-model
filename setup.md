@@ -1,82 +1,114 @@
-# SCM — Setup & Reproduction Guide
+# SCM — Setup & Reproduction Guide (v2)
 
-Concise, ordered steps to reproduce the project from this repo. Training runs on
-Kaggle (GPU **T4 x2**); evaluation runs in a separate clean environment.
+Concise, ordered steps to reproduce the **v2** pipeline from this repo. Training
+runs on Kaggle (GPU **T4 x2**); evaluation runs in a separate clean environment.
+
+> **v1** (the APPS/golfed-solutions attempt) is frozen in [`Version 1.0/`](./Version%201.0/);
+> its own `Version 1.0/setup.md` reproduces it. This guide is v2 (OpenCodeReasoning
+> reasoning traces).
 
 ## Conventions
 
+- On Kaggle you **`git clone` this repo** into the notebook, then run scripts from
+  the repo root. Examples below assume you are inside the cloned `SCM/` directory.
 - In a notebook cell: `!python file.py` runs a Python file, `!bash file.sh` runs a
-  shell script. Set env vars inline: `!VAR=x bash file.sh`.
-- Get the repo onto the machine with `git clone <repo>` (or upload a zip).
+  shell script. Set env vars inline: `!VAR=x python file.py`.
+- **Internet must be ON** in the Kaggle notebook (data streams from the HF Hub).
 
 ---
 
-## 1. Data prep (CPU, any machine)
+## 0. Clone the repo (Kaggle)
 
 ```bash
-pip install -r requirements/data.txt
-python data/prepare_apps.py            # -> data/apps_train.jsonl (APPS TRAIN split only)
+!git clone https://github.com/Shaurya-Saini/SCM.git   # or your fork/URL
+%cd SCM
 ```
 
----
-
-## 2. Colab smoke test (optional, free T4)
-
-Purpose: prove the QLoRA loop before spending Kaggle hours.
-
-1. `Runtime -> Change runtime type -> T4 GPU`.
-2. `%pip install -q unsloth`
-3. Load `unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit` in 4-bit, attach LoRA.
-4. Load ~50 APPS train rows (Parquet), format with the chat template.
-5. Train ~20 steps with `SFTConfig` (`dataset_text_field`/`max_length`/`packing`
-   live in `SFTConfig`), confirm loss drops and generation works.
+(If you push under a different remote, clone that instead — the layout is the same.)
 
 ---
 
-## 3. Training (Kaggle, GPU T4 x2)
+## 1. Training (Kaggle, GPU T4 x2) — data prep + fine-tune in one notebook
 
-### 3.1 Session
-- Right sidebar -> **Accelerator = GPU T4 x2** (NOT P100). **Internet = on**.
+The v2 data-prep step uses the same libraries the trainer does (Unsloth pulls a
+compatible `transformers`/`datasets`/`trl`), so install once and run both steps in
+the **same** T4 x2 notebook.
+
+### 1.1 Session
+- Right sidebar → **Accelerator = GPU T4 x2** (NOT P100). **Internet = on**.
 - Verify: `import torch; print(torch.cuda.get_device_capability(0))  # (7, 5)`
 
-### 3.2 Install
+### 1.2 Install
 ```bash
-pip install -r requirements/train.txt   # unsloth (pulls a compatible torch/transformers/trl set)
+!pip install -r requirements/train.txt   # unsloth (+ compatible torch/transformers/trl/datasets)
 ```
 
-### 3.3 HF token (write) as a Kaggle Secret
-- huggingface.co -> Settings -> Access Tokens -> new **Write** token.
-- Kaggle -> Add-ons -> Secrets -> add `HF_TOKEN`.
+### 1.3 HF token (write) as a Kaggle Secret
+- huggingface.co → Settings → Access Tokens → new **Write** token.
+- Kaggle → Add-ons → Secrets → add `HF_TOKEN`.
 ```python
 import os
 from kaggle_secrets import UserSecretsClient
 os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
 ```
 
-### 3.4 Build data + train
+### 1.4 Build the v2 corpus (OpenCodeReasoning reasoning traces)
+Streams `nvidia/OpenCodeReasoning` (`split_0`), applies the firewall
+(`split=='train'` + allowed sources only), and writes ~10k reasoning-trace
+examples ≤ 8192 tokens each.
 ```bash
-python data/prepare_apps.py
-python training/train_qlora.py \
-    --epochs 1 --batch-size 2 --grad-accum 4 \
-    --save-steps 50 --save-total-limit 3 \
+!python data/prepare_reasoning_traces.py            # -> data/reasoning_train.jsonl
+```
+Sanity-inspect a couple of rendered rows before training:
+```python
+import json
+rows = [json.loads(l) for l in open("data/reasoning_train.jsonl")][:2]
+for r in rows:
+    print(r["source"], r["difficulty"], r["n_tokens"])
+    print(r["prompt"][:300]); print("---"); print(r["response"][:400]); print("=====")
+```
+Confirm each `response` is `<think> …reasoning… </think>` + a fenced Python
+solution (NOT a golfed one-liner).
+
+### 1.5 Smoke test the training loop FIRST (the Kaggle trial run)
+Prove the loop end-to-end on a tiny slice before the full run:
+```bash
+!python training/train_qlora.py --max-samples 300 --max-steps 15 --save-steps 10
+```
+Expect: model loads in 4-bit, `train_on_responses_only: enabled`, loss logged and
+dropping, an `outputs/checkpoint-*` written. If this passes, do the full run.
+
+### 1.6 Full run + push to the Hub
+```bash
+!python training/train_qlora.py \
+    --epochs 1 --save-steps 50 --save-total-limit 3 \
     --push --merge-16bit \
-    --hf-username <user> --hf-repo qwen2.5-coder-7b-apps-qlora
+    --hf-username <user> --hf-repo qwen2.5-coder-7b-ocr-qlora
 ```
-Use **Save Version -> Save & Run All (Commit)** to run in the background.
+Defaults are v2-tuned: `--max-seq-len 8192 --batch-size 1 --grad-accum 8 --lr 1e-4`
+(long sequences on a 16 GB T4; lower LR to curb forgetting). Use **Save Version →
+Save & Run All (Commit)** to run in the background.
 
-### 3.5 Resume after a disconnect
+### 1.7 Resume after a disconnect
 ```bash
-python training/train_qlora.py ... --resume   # auto-detects outputs/checkpoint-*
+!python training/train_qlora.py --epochs 1 ... --resume   # auto-detects outputs/checkpoint-*
 ```
 
-### 3.6 Confirm push
-Hub should show `…/qwen2.5-coder-7b-apps-qlora` (merged 16-bit) and `…-lora` (adapter).
+### 1.8 Confirm push
+Hub should show `…/qwen2.5-coder-7b-ocr-qlora` (merged 16-bit) and `…-ocr-qlora-lora`
+(adapter). This is a **distinct** repo from the v1 model — v1 is not overwritten.
 
 ---
 
-## 4. Evaluation (fresh environment, NO Unsloth)
+## 2. Evaluation (fresh environment, NO Unsloth)
 
-### 4.1 Install (pins matter — install LAST so nothing upgrades them back)
+> **Phase 3 (v2 eval overhaul) is in progress.** The APPS re-scoring path below
+> (generate with the harness, score with `eval/score_apps.py`) is validated and
+> gives the direct v1→v2 continuity numbers (4-bit, same 150/tier subset). The v2
+> **headline** eval — LiveCodeBench (bf16) + HumanEval+/MBPP+ sanity + avg@k — is
+> being added; see `V2_PROGRESS.md` Phase 3.
+
+### 2.1 Install (pins matter — install LAST so nothing upgrades them back)
 ```bash
 pip install -r requirements/eval.txt
 git clone https://github.com/bigcode-project/bigcode-evaluation-harness
@@ -84,61 +116,36 @@ cd bigcode-evaluation-harness && pip install -e . && pip install -r requirements
 pip install "datasets>=2.16,<4.0" "transformers>=4.44,<5.0" bitsandbytes
 ```
 
-### 4.2 Preflight (fails fast on any version/dep issue)
+### 2.2 Preflight + one-time tokenizer repair
 ```bash
-python /path/to/SCM/eval/preflight.py     # want: "Preflight PASSED"
+python /path/to/SCM/eval/preflight.py                                   # want "Preflight PASSED"
+python /path/to/SCM/eval/fix_tokenizer_config.py --repo <user>/qwen2.5-coder-7b-ocr-qlora
 ```
 
-### 4.3 One-time: repair the fine-tuned tokenizer (transformers 4.x)
-```bash
-python /path/to/SCM/eval/fix_tokenizer_config.py --repo <user>/qwen2.5-coder-7b-apps-qlora
-```
+### 2.3 Generate on APPS test (harness), then SCORE with score_apps.py
+`run_apps_eval.sh` auto-applies the harness patches and saves generations.
+**Do NOT trust the harness's own `*_metrics.json`** — its APPS scorer is broken for
+this setup (see CLAUDE.md §8). Score the saved generations with `score_apps.py`.
 
-### 4.4 Run APPS eval (from the harness dir with `main.py`)
-`run_apps_eval.sh` auto-applies the harness patches (`fix_pyext_py312.py`,
-`fix_harness_apps.py`) and defaults to `LOAD_IN=4bit`, `NUM_PROCESSES=1`,
-`EOS=<|im_end|>`.
-```bash
-# smoke (10 problems)
-LIMIT=10 MODEL=<user>/qwen2.5-coder-7b-apps-qlora LABEL=finetuned_smoke \
-  HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
+> **Reasoning models emit long `<think>` before the code.** For the v2 model, give
+> generation a large `--max_new_tokens` and ensure code extraction takes the **last**
+> ```python fence after the reasoning (Phase 3 wires this into the generation step;
+> `score_apps.py` scores already-extracted code).
 
-# full subset runs (NUM_PROCESSES=2 uses both T4s)
-LIMIT=150 NUM_PROCESSES=2 MODEL=<user>/qwen2.5-coder-7b-apps-qlora LABEL=finetuned \
+```bash
+# generate (base and v2 fine-tune), 150/tier
+LIMIT=150 NUM_PROCESSES=2 MODEL=<user>/qwen2.5-coder-7b-ocr-qlora LABEL=finetuned \
   HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
 LIMIT=150 NUM_PROCESSES=2 MODEL=Qwen/Qwen2.5-Coder-7B-Instruct LABEL=base \
   HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
-```
-Generations land in `results/apps/<label>/<task>_generations*.json`.
 
-> **Do NOT trust the harness's own `*_metrics.json`.** Its APPS scorer was found
-> broken for this setup (it reported 0.0% on introductory for generations that are
-> ~16% correct — it mis-aligns solutions with the wrong problems' tests). The
-> *generations* are fine; only its *scoring* is wrong. Score with `score_apps.py`
-> instead (next step). If you only need generations, pass `--generation_only` is
-> not required — the wrapper already saves them.
-
-### 4.5 Score the generations with `score_apps.py` (replaces the harness scorer)
-`score_apps.py` re-scores the saved generations correctly: it aligns each solution
-to its problem via the difficulty config, executes against the hidden tests
-(stdin + call-based), compares whitespace-normalized, and writes both per-tier
-`*_metrics.rescored.json` and a consolidated `results/scores.rescored.json`. CPU-
-only, parallel across cores; needs `datasets`. Validation gate: base/introductory
-should be ~16%.
-```bash
-# both models, all tiers (up to 25 hidden tests/problem for speed)
+# score (replaces the harness scorer); base/introductory should be ~16%
 python /path/to/SCM/eval/score_apps.py \
   --results-dir /path/to/SCM/results/apps --labels base,finetuned --max-tests 25 \
   --scores-out /path/to/SCM/results/scores.rescored.json
 ```
-To autopsy *why* a run scores low (static + execution + alignment self-check):
-```bash
-python /path/to/SCM/eval/diagnose_apps.py \
-  --generations results/apps/base/apps-introductory_generations_apps-introductory.json \
-  --tier introductory --label base --limit 30 --show-io
-```
 
-### 4.6 Build results table + diagram
+### 2.4 Build results table + diagram
 ```bash
 python eval/build_results_table.py --scores results/scores.rescored.json \
   --out results/report.md        # -> results/report.md + results/figures/*.png
@@ -146,8 +153,10 @@ python eval/build_results_table.py --scores results/scores.rescored.json \
 
 ---
 
-## 5. LiveCodeBench + frontier (deferred to v2)
+## 3. LiveCodeBench + frontier (Phase 3, in progress)
 
 Clone `LiveCodeBench`, `pip install -e .`, run `eval/run_livecodebench_eval.sh`
-(record the release version), and add published leaderboard numbers as the
-`frontier` column in `results/scores.json`. Never train on LiveCodeBench.
+(record the release version), and add published leaderboard numbers as a frontier
+column. **Pin the LCB version window to dates that post-date the OpenCodeReasoning
+corpus** (or decontaminate by problem id) so codeforces/code_contests training
+overlap can't contaminate the headline. Never train on LiveCodeBench.

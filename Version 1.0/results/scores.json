@@ -1,0 +1,22 @@
+{
+  "notes": "APPS held-out **test** split, 150 problems per difficulty tier. Both models: 4-bit, single-sample (greedy, temp 0.2), prompted with the SAME Qwen chat template the fine-tune was trained in (fair comparison). **These numbers are RE-SCORED by `eval/score_apps.py`.** The original v1 run used bigcode-evaluation-harness, whose APPS scorer was broken for this setup — it reported 0.0% on introductory for base generations that are actually ~16% correct (the generations were fine; the harness's scoring/orchestration mis-aligned and threw them away). Scoring here is alignment-verified (difficulty config), executes each solution against the hidden tests, and is whitespace-normalized; metrics are computed over up to 25 hidden tests per problem (a small over-count vs. the full suite). Two metrics: **pass@1** = strict accuracy (ALL tested hidden tests pass) and **average test-case pass rate** = mean fraction of hidden tests passed (partial credit). Corrected finding: the un-tuned base is a respectable coder (16.0 / 9.3 / 3.3 pass@1, now correctly monotonic easy→hard), and the v1 QLoRA fine-tune — trained on the single *shortest* (golfed) APPS solution per problem, 1 epoch — **still underperformed the base on every tier and both metrics**, largely due to a learned broken-syntax (extra-closing-bracket) artifact. See README.md for analysis and the v2 plan.",
+  "model_columns": [
+    { "key": "base",      "label": "Base (Qwen2.5-Coder-7B-Instruct)" },
+    { "key": "finetuned", "label": "Fine-tuned v1 (QLoRA/APPS)" }
+  ],
+  "records": [
+    { "benchmark": "apps", "model": "base",      "tier": "easy",   "k": 1, "pass_at_k": 16.0, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps", "model": "finetuned", "tier": "easy",   "k": 1, "pass_at_k": 0.67, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps", "model": "base",      "tier": "medium", "k": 1, "pass_at_k": 9.33, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps", "model": "finetuned", "tier": "medium", "k": 1, "pass_at_k": 2.0,  "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps", "model": "base",      "tier": "hard",   "k": 1, "pass_at_k": 3.33, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps", "model": "finetuned", "tier": "hard",   "k": 1, "pass_at_k": 0.0,  "n_problems": 150, "source": "our-eval" },
+
+    { "benchmark": "apps_avg", "model": "base",      "tier": "easy",   "k": 1, "pass_at_k": 34.31, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps_avg", "model": "finetuned", "tier": "easy",   "k": 1, "pass_at_k": 3.12,  "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps_avg", "model": "base",      "tier": "medium", "k": 1, "pass_at_k": 36.27, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps_avg", "model": "finetuned", "tier": "medium", "k": 1, "pass_at_k": 6.83,  "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps_avg", "model": "base",      "tier": "hard",   "k": 1, "pass_at_k": 16.17, "n_problems": 150, "source": "our-eval" },
+    { "benchmark": "apps_avg", "model": "finetuned", "tier": "hard",   "k": 1, "pass_at_k": 1.33,  "n_problems": 150, "source": "our-eval" }
+  ]
+}

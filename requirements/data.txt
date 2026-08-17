@@ -1,2 +1,5 @@
 datasets>=2.16.0
 huggingface_hub>=0.23.0
+# v2: prepare_reasoning_traces.py loads the Qwen tokenizer to filter OCR examples
+# by exact token length (falls back to a char proxy with --no-token-filter).
+transformers>=4.44.0

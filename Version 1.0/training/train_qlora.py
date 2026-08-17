@@ -1,32 +1,22 @@
 #!/usr/bin/env python
 """
-train_qlora.py -- QLoRA fine-tune Qwen2.5-Coder-7B-Instruct with Unsloth.
-Designed to run on Kaggle (T4 x2) for the real run and on Colab (single T4) for a
-smoke test -- same script, smaller flags.
+train_qlora.py -- QLoRA fine-tune Qwen2.5-Coder-7B-Instruct on the APPS train
+split, using Unsloth. Designed to run on Kaggle (T4 x2) for the real run and on
+Colab (single T4) for a smoke test -- same script, smaller flags.
 
-v2 (reasoning traces): reads the SFT file produced by
-data/prepare_reasoning_traces.py (default data/reasoning_train.jsonl), where each
-row is {prompt, response} and `response` is a DeepSeek-R1 reasoning trace
-("<think>...</think>" + a fenced Python solution). Wraps each {prompt, response}
-in Qwen's chat template, masks everything before the assistant turn, and trains a
-LoRA adapter so loss is computed on the reasoning + code. The field names are
-configurable (--prompt-field / --response-field) so the same script still handles
-the v1 {prompt, solution} format.
+Reads the SFT file produced by data/prepare_apps.py (default data/apps_train.jsonl),
+wraps each {prompt, solution} in the model's chat template, and trains a LoRA
+adapter. Checkpoints aggressively so a dropped free session loses minimal work,
+and can push the merged model to the Hugging Face Hub.
 
-Why the v2 defaults differ from v1 (see CLAUDE.md 3):
-  * --max-seq-len 8192  -- reasoning traces are long; v1's 2048 would truncate them.
-  * --batch-size 1 --grad-accum 8 -- 8192-token sequences are ~4x v1's VRAM; batch 1
-    keeps a 16 GB T4 from OOMing while grad-accum keeps the effective batch at 8.
-  * --lr 1e-4 (was 2e-4) -- lower LR + one pass to reduce catastrophic forgetting.
+RULES (see CLAUDE.md): trains on APPS-train ONLY (whatever is in --data). Never
+point --data at APPS-test or LiveCodeBench.
 
-RULES (see CLAUDE.md 4): trains on whatever is in --data. That file must be the
-firewalled OpenCodeReasoning train subset (or APPS-train). NEVER point --data at
-APPS-test or LiveCodeBench.
-
---- Smoke test (Colab / Kaggle trial) ------------------------------------------
+--- Smoke test (Colab, ~2 min) -------------------------------------------------
     python train_qlora.py --max-samples 20 --max-steps 10 --save-steps 5
 --- Real run (Kaggle T4 x2) ----------------------------------------------------
-    python train_qlora.py --epochs 1 --save-steps 50 --push --merge-16bit
+    python train_qlora.py --epochs 1 --batch-size 2 --grad-accum 4 \
+        --save-steps 50 --push --merge-16bit
 --- Resume after a disconnect (auto-detects last checkpoint in --output-dir) ----
     python train_qlora.py --epochs 1 ... --resume
 --------------------------------------------------------------------------------
@@ -42,8 +32,7 @@ import os
 
 DEFAULT_MODEL = "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
 DEFAULT_HF_USERNAME = os.environ.get("HF_USERNAME", "Shaurya-saini")
-# v2 uses a DISTINCT repo so the v1 model (…-apps-qlora) is never overwritten.
-DEFAULT_HF_REPO = "qwen2.5-coder-7b-ocr-qlora"
+DEFAULT_HF_REPO = "qwen2.5-coder-7b-apps-qlora"
 
 # Qwen2.5 chat-template markers -- used to mask the prompt so loss is computed on
 # the solution tokens only (train_on_responses_only).
@@ -55,19 +44,11 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     # data / model
-    p.add_argument("--data", default=os.path.join("data", "reasoning_train.jsonl"),
-                   help="SFT JSONL. v2: prepare_reasoning_traces.py (OCR train "
-                        "subset). v1 format also works via --response-field solution.")
-    p.add_argument("--prompt-field", default="prompt",
-                   help="JSONL field for the user turn (default: prompt).")
-    p.add_argument("--response-field", default="response",
-                   help="JSONL field for the assistant target. v2: 'response' "
-                        "(reasoning+code); v1: 'solution' (code only).")
+    p.add_argument("--data", default=os.path.join("data", "apps_train.jsonl"),
+                   help="SFT JSONL from prepare_apps.py (APPS train only).")
     p.add_argument("--model-name", default=DEFAULT_MODEL)
     p.add_argument("--output-dir", default="outputs")
-    p.add_argument("--max-seq-len", type=int, default=8192,
-                   help="Reasoning traces are long; 8192 keeps them intact "
-                        "(v1 used 2048).")
+    p.add_argument("--max-seq-len", type=int, default=2048)
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap training rows (smoke test).")
     # LoRA
@@ -78,12 +59,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--epochs", type=float, default=1.0)
     p.add_argument("--max-steps", type=int, default=-1,
                    help="If >0, overrides --epochs (use for smoke tests).")
-    p.add_argument("--batch-size", type=int, default=1,
-                   help="Per-device batch. 1 keeps 8192-token seqs on a 16 GB T4.")
-    p.add_argument("--grad-accum", type=int, default=8,
-                   help="Effective batch = batch-size * grad-accum * n_gpus.")
-    p.add_argument("--lr", type=float, default=1e-4,
-                   help="Lower than v1 (2e-4) to reduce catastrophic forgetting.")
+    p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--warmup-ratio", type=float, default=0.03)
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--seed", type=int, default=3407)
@@ -135,28 +113,20 @@ def main() -> None:
         random_state=args.seed,
     )
 
-    # ---- 2. Data: {prompt, response} -> chat-template "text" ----------------
+    # ---- 2. Data: {prompt, solution} -> chat-template "text" ----------------
     if not os.path.exists(args.data):
         raise SystemExit(f"Training data not found: {args.data}\n"
-                         f"Run data/prepare_reasoning_traces.py first (v2).")
+                         f"Run data/prepare_apps.py first.")
     ds = load_dataset("json", data_files=args.data, split="train")
-    for field in (args.prompt_field, args.response_field):
-        if field not in ds.column_names:
-            raise SystemExit(f"--data is missing field '{field}'. "
-                             f"Columns present: {ds.column_names}. "
-                             f"Set --prompt-field/--response-field to match.")
     if args.max_samples is not None:
         ds = ds.select(range(min(args.max_samples, len(ds))))
-    print(f"Training rows: {len(ds)} "
-          f"(prompt='{args.prompt_field}', response='{args.response_field}')")
-
-    prompt_field, response_field = args.prompt_field, args.response_field
+    print(f"Training rows: {len(ds)}")
 
     def to_text(batch):
         texts = []
-        for prompt, response in zip(batch[prompt_field], batch[response_field]):
+        for prompt, solution in zip(batch["prompt"], batch["solution"]):
             msgs = [{"role": "user", "content": prompt},
-                    {"role": "assistant", "content": response}]
+                    {"role": "assistant", "content": solution}]
             texts.append(tokenizer.apply_chat_template(msgs, tokenize=False))
         return {"text": texts}
 

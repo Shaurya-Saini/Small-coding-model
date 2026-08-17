@@ -94,16 +94,47 @@ scope for a free T4** beyond a tiny didactic run.
   on **OpenCodeReasoning**-style long reasoning traces instead of golfed shortest
   solutions. *Still supervised imitation — but of the reasoning process + a clean
   solution, not a cryptic destination.* Directly fixes root causes 1 & 3.
+  - **Distillation-ceiling note:** OpenCodeReasoning traces are **DeepSeek-R1
+    generations** (correctness-filtered). Pure SFT/imitation has a *soft ceiling at
+    the teacher's ability* — you can't reliably exceed R1 by copying it. This is NOT
+    a binding constraint here: R1 (671B) is ~65% LCB, a 7B SFT'd on its traces
+    reached ~51%, our base is ~37% — the cap is our **7B capacity**, not R1. The
+    teacher is far stronger than the student, so distilling is pure upside. The one
+    method NOT bounded by a teacher is RL (it learns from ground-truth tests, not a
+    target) → that's the **v3** escape hatch below.
 - **Base model (DECIDED 2026-08-17): keep Qwen2.5-Coder-7B-Instruct** — cleanest
   v1→v2 ablation (only the DATA changes). Same recipe OpenCodeReasoning used to take
   a 7B to ~51% LCB. (DeepSeek-R1-Distill-Qwen-7B was the higher-ceiling alternative,
   not chosen — it would confound the ablation by changing base + data at once.)
+- **Data specifics (DECIDED 2026-08-18, with user):** OCR config **`split_0` only**
+  (question inline via `input`; avoids the `split_1` APPS/TACO join). Firewall =
+  **`split=='train'` AND source ∈ {apps, taco, code_contests, codeforces}**
+  (`ALLOWED_SOURCES` in `data/prepare_reasoning_traces.py`) → no APPS-test/valid
+  leakage. Subset **~10k examples @ `max_seq_len` 8192**. Each row = `{prompt,
+  response}` where `response` = `<think>…</think>` + one fenced ```python``` block;
+  training masks the prompt (loss on reasoning + code). Implemented in
+  `data/prepare_reasoning_traces.py` + `training/train_qlora.py`; v2 pushes to a
+  **distinct** Hub repo `qwen2.5-coder-7b-ocr-qlora` (v1 not overwritten).
+  **LCB caveat:** codeforces/code_contests can overlap LiveCodeBench's window →
+  enforce the LCB firewall at eval time (pin window post-OCR or decon by id).
 - **Anti-forgetting:** lower LR (~1e-4), fewer steps, optionally mix in general
   instruction data; track a general-code sanity metric (below) to prove no
   regression.
-- **RL (stretch/didactic only):** a small GRPO+QLoRA run with a strict +1/0
-  pass-all-tests reward on a few hundred *clean* problems (≥5 tests each to avoid
-  reward hacking) — for the write-up, not to chase DeepCoder's numbers.
+- **RL is NOT part of v2** — it moves to v3 (below).
+
+### v3 (CONDITIONAL — only if v2 underperforms): RL to break the distillation ceiling
+- **Trigger:** attempt v3 only if v2's SFT plateaus (e.g. stalls near the ~51% class
+  / clearly below its potential) *or* still underperforms. If v2 succeeds, v3 is
+  optional and can be skipped.
+- **Why RL specifically:** SFT is capped by the R1 teacher's distribution; RL/GRPO
+  (RLVR) is not — the model generates its own solutions and is rewarded only when the
+  code passes tests, so it can surpass any teacher. This is the *only* lever that
+  raises the ceiling rather than approaching it.
+- **Method (when we get there):** GRPO+QLoRA (Unsloth supports it) on top of the v2
+  checkpoint; strict +1/0 pass-all-tests reward on *clean* problems (≥5 tests each to
+  avoid reward hacking); start tiny/didactic. Full RL (DeepCoder = 32×H100 × 2.5 wks)
+  stays out of scope for a free T4 — v3 is a scoped experiment, not a frontier chase.
+- **Hard rule stays:** never train on LiveCodeBench, even in RL (§4 rule 1).
 
 ### Eval overhaul (v1 eval understated everything — fix before comparing)
 The v1 numbers are depressed by the *measurement*, not just the model. Tell-tale:
