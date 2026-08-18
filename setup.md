@@ -53,8 +53,17 @@ os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
 ```
 
 ### 1.4 Build the v2 corpus (OpenCodeReasoning reasoning traces)
-Streams `nvidia/OpenCodeReasoning` (`split_0`) and writes **~3000** reasoning-trace
-examples **≤ 4096 tokens** each to `data/reasoning_train.jsonl`.
+Streams `nvidia/OpenCodeReasoning` (`split_0`) and writes reasoning-trace examples,
+each **guaranteed to fit the training budget**, to `data/reasoning_train.jsonl`.
+
+> **⚠️ v2.1 — this step had a bug that broke the first v2 model. Read this.** The
+> length filter used to silently pass EVERY row (on transformers≥5,
+> `len(apply_chat_template(tokenize=True))` returns `2`), so oversized traces
+> (median ~7500, max ~20000 tokens) slipped in and got their `</think>`+code tail
+> truncated at train time — the model then learned to reason forever and never emit
+> code. **Fixed** (correct length measurement + a startup probe). With the fix the
+> filter actually bites, so **use `--max-seq-len 4000`** (margin under the 4096 train
+> cap) and expect the numbers described below.
 
 > **What's actually in split_0 (verified by a full 567k-row scan):** its
 > `split=='train'` partition is effectively **`code_contests` only** — DeepMind's
@@ -66,17 +75,23 @@ examples **≤ 4096 tokens** each to `data/reasoning_train.jsonl`.
 > APPS-test firewall is automatically satisfied (no APPS data present).
 
 ```bash
-# Chosen size: 2500 examples (~8 h train — comfortable margin under the 12 h cap).
-!python data/prepare_reasoning_traces.py --target 2500   # -> data/reasoning_train.jsonl
-# Alternatives: omit --target for the default 3000 (~9.6 h); --target 200 for a smoke.
+# v2.1: 2500 examples, each <= 4000 tokens (margin under the 4096 train cap).
+!python data/prepare_reasoning_traces.py --target 2500 --max-seq-len 4000   # -> data/reasoning_train.jsonl
+# Smoke variant: --target 200 --max-seq-len 4000
 ```
-`--target` lives on the **data-prep** step (it sets how many rows are written).
-The **training** step then uses whatever is in the file — no size flag needed there
-(don't confuse it with training's `--max-samples`, which only *caps* rows for a
-smoke). Because `code_contests` is front-loaded in the stream, collection **stops
-early** once `--target` is reached (~1–2 min) — you will NOT see a full 567k-row
-scan. Confirm the summary prints `examples written : 2500` (not 750). Then
-sanity-inspect a few rendered rows:
+`--target`/`--max-seq-len` live on the **data-prep** step. The **training** step then
+uses whatever is in the file (don't confuse with training's `--max-samples`, which
+only *caps* rows for a smoke).
+
+**What you MUST see now (proves the fix is live):**
+- The log prints `Length filter: exact tokens via … (max_seq_len=4000; probe=NNN
+  tokens)` with **NNN a real number in the hundreds** — never `probe` missing or ~2.
+- `examples written : 2500`, and **`rows scanned` is MUCH larger than 2500** (tens of
+  thousands) — because the working filter now rejects the ~70% of traces that are too
+  long. This run therefore takes several minutes and does more parsing than the old
+  (broken) ~1–2 min run. That's correct.
+
+Then sanity-inspect (token range must be realistic, NOT `2 - 2`):
 ```python
 import json
 from collections import Counter
@@ -87,17 +102,20 @@ for r in rows[:3]:
     print(r["source"], r["difficulty"], r["n_tokens"])
     print(r["prompt"][:300]); print("---"); print(r["response"][:400]); print("=====")
 ```
-Confirm each `response` is `<think> …reasoning… </think>` + a fenced Python solution
-(reasoning + clean code, NOT a golfed one-liner).
+Confirm: `tokens:` spans up into the ~3000–4000s (not `2 - 2`), and each `response`
+is `<think> …reasoning… </think>` + a fenced Python solution (reasoning + clean
+code). If tokens read `2 - 2`, the fix didn't take — re-clone/re-pull the repo.
 
-### 1.5 Smoke test the training loop FIRST (optional — already validated once)
-The loop is already proven end-to-end (loss drops, checkpoints write). Re-run this
-only if you changed the stack:
+### 1.5 Smoke test the training loop FIRST
 ```bash
 !python training/train_qlora.py --max-samples 300 --max-steps 15 --save-steps 10
 ```
-Expect: model loads in 4-bit, `train_on_responses_only: enabled`, loss logged and
-dropping, an `outputs/checkpoint-*` written.
+Expect: model loads in 4-bit; the **truncation guard** prints `Token lengths:
+max=… over-limit=0/300 (max_seq_len=4096)` (the `0` is what matters — it proves no
+example will be tail-truncated); `train_on_responses_only: enabled`; loss logged and
+dropping; an `outputs/checkpoint-*` written. **If it aborts with `ABORT: N/… examples
+exceed --max-seq-len`, your corpus is still oversized** — you skipped `--max-seq-len
+4000` at §1.4 or are running stale code; regenerate the data.
 
 ### 1.6 Full run + push to the Hub
 ```bash
@@ -107,6 +125,9 @@ dropping, an `outputs/checkpoint-*` written.
     --hf-username <user> --hf-repo qwen2.5-coder-7b-ocr-qlora
 ```
 Defaults are v2-tuned: `--max-seq-len 4096 --batch-size 1 --grad-accum 8 --lr 1e-4`.
+Watch for `over-limit=0/2500` right before training starts (the guard) — that is your
+confirmation the v2.1 corpus is clean. Overwriting `…-ocr-qlora` is fine (the first
+v2 checkpoint is broken); use `…-ocr-qlora-v2` if you want to keep it as evidence.
 
 > **Time budget (measured on this exact setup):** Unsloth's free tier trains on
 > **one** T4 only (`Num GPUs used = 1`), at **~92 s/step** @ 4096 tokens (≈ half of
@@ -219,6 +240,26 @@ python /path/to/SCM/eval/score_apps.py \
   --results-dir results/apps --labels base,finetuned --max-tests 25 \
   --scores-out /path/to/SCM/results/scores.rescored.json
 ```
+
+> **GATE — before the v2 *full* run, confirm the fine-tune actually TERMINATES.**
+> The first v2 model looped forever (never closed `<think>`, never emitted code,
+> ~8 min/problem, ~0%). After the v2 **smoke** (`LIMIT=2 NUM_PROCESSES=1
+> PROMPT_STYLE=v2`), dump a generation and check it reaches the code:
+> ```python
+> import json
+> g = json.load(open("results/apps/finetuned/apps-introductory_generations_apps-introductory.json"))[0][0]
+> print("chars:", len(g), "| </think>:", "</think>" in g,
+>       "| ```python:", "```python" in g, "| <|im_end|>:", "<|im_end|>" in g)
+> print(g[-800:])
+> ```
+> Want `</think>=True`, ```` ```python=True ````, `<|im_end|>=True`, and **length well
+> under the 6144 budget** (fast, ~1–2 min/problem). If it still loops (no `</think>`,
+> runs to budget), the retrained model still isn't terminating — do NOT launch the
+> 150/tier run (it'd be ~20 h and score 0). Fallbacks, in order: raise
+> `TEMPERATURE=0.6`; if still looping it's a training issue → revisit the corpus
+> (a repetition-penalty patch to the harness generation call is the last resort).
+> Only once the smoke shows clean, terminating code is the `LIMIT=150 NUM_PROCESSES=2`
+> v2 run worth starting (run it as a committed session — it's multi-hour).
 
 ### 2.4 Build results table + diagram
 ```bash

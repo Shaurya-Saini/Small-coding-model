@@ -51,7 +51,31 @@ Two metrics are reported: **pass@1** (strict accuracy — all hidden tests pass)
 (raw metrics + generations), and the README analysis.
 
 - **Not done in v1 (deferred to v2):** LiveCodeBench + frontier column; a live demo.
-- **Git:** not initialized (user choice). **HF username:** `Shaurya-saini`.
+- **Git:** not initialized locally (user choice). Kaggle clones the user's GitHub
+  repo `Small-coding-model` — **local edits must be pushed there** to take effect.
+  **HF username:** `Shaurya-saini`.
+
+### v2 status (2026-08-18): first fine-tune FAILED (data bug) — v2.1 is the next action
+
+- **Trained + pushed:** `Shaurya-saini/qwen2.5-coder-7b-ocr-qlora` — QLoRA, 2500
+  OpenCodeReasoning `split_0` (code_contests) reasoning traces, 1 epoch, 313 steps,
+  ~8.6h on one T4.
+- **Result: BROKEN.** At eval the model opens `<think>`, reasons to the token
+  budget, and **never closes `</think>` or emits a ```python``` block** → ~0%
+  runnable. Ruled out sampling (temperature 0.6 and repetition_penalty+
+  no_repeat_ngram both tried — loops break but still no code). This is **not** model
+  capacity.
+- **Root cause (data bug, see §8):** the data-prep length filter was a silent no-op
+  on transformers≥5 (`len(apply_chat_template(tokenize=True))`==2), so oversized
+  traces (median 7518, max 20307 tok) passed and 71% were tail-truncated at
+  `max_length=4096` during training → the model learned to reason without concluding.
+- **Fixed (local, must be pushed):** `prepare_reasoning_traces.py` (correct length
+  measurement + probe), `train_qlora.py` (truncation guard). Eval path for the
+  reasoning model also built (`PROMPT_STYLE=v2` in `run_apps_eval.sh` /
+  `fix_harness_apps.py`); base APPS smoke healthy.
+- **v2.1 next action:** push fixes → regenerate corpus (`--target 2500
+  --max-seq-len 4000`) → retrain 1 epoch → re-eval. Full runbook in `setup.md`;
+  status detail in `V2_PROGRESS.md`.
 
 ---
 
@@ -273,6 +297,22 @@ Directories are created by the phase that needs them.
   Do NOT reintroduce `trust_remote_code`.
 - **TRL API:** `dataset_text_field` / `max_length` / `packing` live in `SFTConfig`,
   not `SFTTrainer` kwargs.
+- **v2 length-filter no-op → tail truncation (root cause of the first v2 model's
+  failure, found 2026-08-18).** `prepare_reasoning_traces.py` measured example
+  length with `len(tok.apply_chat_template(msgs, tokenize=True))`. On
+  **transformers≥5** that call returns a `BatchEncoding` dict, so `len()` == number
+  of keys == **2** for EVERY row → the `n_tok > max_seq_len` filter never fired →
+  oversized traces (median **7518**, max **20307** tokens) passed. At train time
+  `max_length=4096` truncated **1797/2500**, and **1777/2500 (71%)** lost their
+  `</think>`+code+`<|im_end|>` tail. Result: a model that opens `<think>`, reasons
+  forever, and never emits code (0% runnable; temperature/repetition-penalty at eval
+  can't fix it — the capability was never trained). **Fixes:** (a) measure the
+  length the trainer actually sees — `apply_chat_template(tokenize=False)` then
+  tokenize the string — with a startup probe that raises if it returns <20 tokens;
+  (b) a truncation guard in `train_qlora.py` that aborts if >2% of rendered examples
+  exceed `--max-seq-len`. Always sanity-check that data-prep prints REAL token
+  counts (hundreds–thousands), never ~2. v2.1 must regenerate the corpus with the
+  fixed filter before retraining.
 
 ### Evaluation environment (bigcode-evaluation-harness on a modern Kaggle stack)
 - **`AttributeError: 'APPS' object has no attribute 'dataset'`** — harness loads

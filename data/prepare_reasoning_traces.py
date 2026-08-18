@@ -190,14 +190,35 @@ def make_length_fn(max_seq_len: int, use_tokenizer: bool):
             tok = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
 
             def n_tokens(prompt: str, response: str) -> int:
+                # Measure the length the TRAINER actually sees. train_qlora.py
+                # renders with apply_chat_template(tokenize=False) and lets
+                # SFTTrainer tokenize the *string*, so we replicate that exactly.
+                #
+                # DO NOT use `len(tok.apply_chat_template(msgs, tokenize=True))`:
+                # on transformers>=5 that returns a BatchEncoding whose len() is the
+                # number of dict keys (== 2), so EVERY example looks 2 tokens long,
+                # the length filter becomes a no-op, and oversized traces slip
+                # through -> their </think>+code tail is truncated at train time.
+                # That exact bug produced a v2 model that never closed <think>.
                 msgs = [{"role": "user", "content": prompt},
                         {"role": "assistant", "content": response}]
-                ids = tok.apply_chat_template(msgs, tokenize=True,
-                                              add_generation_prompt=False)
-                return len(ids)
+                text = tok.apply_chat_template(msgs, tokenize=False,
+                                               add_generation_prompt=False)
+                return len(tok(text, add_special_tokens=False)["input_ids"])
 
+            # Fail LOUD if the tokenizer path is degenerate: a real rendered
+            # example is hundreds of tokens, never ~2. This guards against a silent
+            # regression like the one above.
+            probe = n_tokens(
+                "Given two integers a and b, print a+b.",
+                "<think>\nadd them\n</think>\n\n```python\nprint(sum(map(int, input().split())))\n```")
+            if probe < 20:
+                raise RuntimeError(
+                    f"tokenizer length probe returned {probe} tokens (expected "
+                    f">20). apply_chat_template length path is broken on this "
+                    f"transformers version -- refusing to run with a no-op filter.")
             print(f"Length filter: exact tokens via {TOKENIZER_NAME} "
-                  f"(max_seq_len={max_seq_len}).")
+                  f"(max_seq_len={max_seq_len}; probe={probe} tokens).")
             return n_tokens
         except Exception as e:  # noqa: BLE001 - stay runnable in a minimal env
             print(f"WARNING: could not load {TOKENIZER_NAME} ({e}); "

@@ -58,7 +58,8 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
 - [x] Wrote + **debugged** `data/prepare_reasoning_traces.py`. Trial exposed 3 bugs (all fixed): (1) old allow-list {apps,taco,code_contests,codeforces} ∩ split_0 = only code_contests → mono-source output; (2) per-source cap checked AFTER the expensive regex parse → wasted the scan budget on 374k over-cap rows; (3) `--max-scan` too low to reach late-in-stream platforms. Now: cheap firewall+cap BEFORE parse, `--max-scan` 1.5M, deny-list instead of allow-list.
 - [x] Format = `problem → <think> trace </think> → clean solution` written to `data/reasoning_train.jsonl` as `{prompt, response}`; training masks everything before the assistant turn
 - [x] Firewall + parse split into `firewall_source()` (cheap) / `parse_row()` (expensive); unit-tested offline (test/valid-split, empty-source, no-think, no-input all skip; codeforces/atcoder/train kept)
-- [ ] **Kaggle re-run (next):** run fixed prep, confirm `sources={…}` shows a spread (not 100% code_contests) and reaches ~3000; inspect a few rendered rows
+- [x] **Kaggle prep re-run:** produced 2500 clean code_contests examples (skipped {}), varied difficulty — BUT see the length-filter bug below.
+- [!] **Length filter was a silent no-op (found 2026-08-18, root cause of the v2 model failure).** `make_length_fn` used `len(tok.apply_chat_template(msgs, tokenize=True))`; on transformers≥5 that returns a `BatchEncoding` dict → `len()`==2 for every row → `n_tok > max_seq_len` never fired → oversized traces (median **7518**, max **20307** tok) passed → 71% got tail-truncated in training. **FIXED:** measure via the trainer's real path (`apply_chat_template(tokenize=False)` → tokenize string) + a startup probe that raises if <20 tokens. **v2.1 must regenerate the corpus** (`--target 2500 --max-seq-len 4000`, margin under the 4096 train cap).
 - [x] Three-dataset firewall preserved: separate script/output; APPS-test & LiveCodeBench never touched
 
 ## Phase 2 — Training (fix root cause #2) `[~]`  ← code done; validate in the Kaggle trial
@@ -67,7 +68,9 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
 - [x] Aggressive checkpointing carried over (save_steps/save_total_limit, `--resume`); **resume to be re-tested in the Kaggle trial**
 - [x] Push path updated to a **distinct** v2 repo `qwen2.5-coder-7b-ocr-qlora` (v1 model not overwritten); merged-16bit + adapter + tokenizer push logic unchanged (see `CLAUDE.md §8`)
 - [x] **Kaggle smoke PASSED:** loaded 4-bit, `train_on_responses_only: enabled`, loss ~1.15→~1.0 over 15 steps, checkpoints written. Confirmed **1 GPU used** (Unsloth free) and **178 s/step** @ 8192 → drove the 4096/3000 revision above.
-- [ ] **Kaggle full run (next):** with the fixed data (~3000 @ 4096), run `--epochs 1 --push --merge-16bit`; verify checkpoint/resume once mid-run
+- [x] **Kaggle full run #1 done → produced a BROKEN model.** 2500 ex, 313 steps, ~8.6h, pushed to `Shaurya-saini/qwen2.5-coder-7b-ocr-qlora`. At eval it never closes `<think>`/emits code (~0% runnable) — caused by the length-filter bug above (71% of targets tail-truncated), NOT model capacity. Temperature 0.6 + repetition_penalty both ruled out at eval.
+- [x] **Added `train_qlora.py` truncation guard** (aborts if >2% of rendered examples exceed `--max-seq-len`) so this can't silently recur.
+- [ ] **v2.1 full run (NEXT):** push fixes → regenerate corpus with the fixed filter → `--epochs 1 --push --merge-16bit` (guard must print `over-limit=0/2500`) → re-smoke eval. All cells are in `setup.md §1`.
 
 ## Phase 3 — Eval overhaul (fix the measurement) `[~]`
 - [x] `eval/diagnose_apps.py` written; **static autopsy done** (offline, no GPU):
@@ -83,6 +86,7 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
 - [x] **Full run done (both models × 3 tiers, corrected):** base 16.0/9.3/3.3 strict (34.3/36.3/16.2 avg); fine-tune 0.7/2.0/0.0 (3.1/6.8/1.3). All tiers `call-based=0` → all stdin, fully trusted path. **Base beats fine-tune on every tier & both metrics, at correct magnitudes.** (Parallel scorer: base introductory ~fast now; fine-tune tiers fast since most don't compile.)
 - [x] **Corrected results committed to repo (done locally from pasted numbers, incl. figures — matplotlib is local):** updated `results/scores.json`, regenerated `results/report.md` + `results/figures/apps.png`/`apps_avg.png`, updated `CLAUDE.md §2` and `README.md` (Results + a new "the harness can be the bug" conclusion). Old bogus numbers preserved as record in `CLAUDE.md`.
 - [x] **APPS scorer replaced, not patched:** `score_apps.py` supersedes the broken bigcode APPS scoring path entirely (no need to fix the harness's comparison/prompt).
+- [x] **v2 APPS eval infra built + base re-eval healthy (2026-08-18).** `eval/fix_harness_apps.py` now has two styles via `SCM_EVAL_STYLE` (wrapper env `PROMPT_STYLE`): `v1` (base/v1 prompt) and `v2` (OCR reasoning prompt, strips `<think>`, extracts LAST ```python fence); `run_apps_eval.sh` raises gen budget to 6144 for v2. Fixed the `HARNESS_MAIN` path trap (`%cd` into harness dir; wrong path silently skips the patch) + `NUM_PROCESSES=1` smoke rule. **Base smoke healthy** (compile errors 2/1/0). **v2 fine-tune eval is BLOCKED on the v2.1 retrain** (current model emits no code).
 - [ ] Then v2-quality eval: regenerate with bf16 + reasoning-prompt + avg@k, score with the same `score_apps.py`; add LiveCodeBench (functional) as co-headline.
 - [ ] Add **HumanEval+/MBPP+ sanity bench**; confirm *base* scores ~85% → proves the pipeline works (gate before trusting any CP number)
 - [ ] Stand up **`lcb_runner`** (LiveCodeBench); pin one version/window (v5 or v6)
@@ -161,3 +165,21 @@ scorer was broken; replaced by `eval/score_apps.py`; v1 numbers corrected (base
   `--max-scan` 1.5M. Both user decisions (compute plan; source mix) taken. Updated
   prep + train defaults + all docs. **NEXT: re-run prep (fixed) + full training on
   Kaggle**, then Phase 3.
+- 2026-08-18 — **v2 full training done → model BROKEN → root cause found & fixed →
+  v2.1 pending.** The real 2500-example / 1-epoch run finished (~8.6h) and pushed to
+  `…-ocr-qlora`, but at eval the model opens `<think>`, reasons to the token budget,
+  and **never closes `</think>` or emits code** (~0% runnable). Ruled out sampling
+  (temperature 0.6 AND repetition_penalty+no_repeat_ngram — loops break but still no
+  code). **Root cause (data bug):** `make_length_fn` used
+  `len(apply_chat_template(tokenize=True))`, which on transformers≥5 returns a dict
+  → `len()`==2 for every row → the length filter was a **no-op** → oversized traces
+  (median 7518, max 20307 tok) passed → `max_length=4096` truncated **1777/2500
+  (71%)**, cutting off the `</think>`+code tail → the model learned to reason without
+  concluding. **Fixes (local, must push):** prep measures length via the trainer's
+  real path (`tokenize=False` → tokenize string) + startup probe; `train_qlora.py`
+  gains a truncation guard (abort if >2% over `--max-seq-len`); CLAUDE.md §8 +
+  §2 updated. Also built the **v2 eval path** (`PROMPT_STYLE=v2`: OCR prompt, strip
+  `<think>`, last fence, budget 6144) and fixed the `HARNESS_MAIN` path trap; base
+  APPS smoke healthy. **NEXT SESSION = v2.1:** push → regenerate corpus
+  (`--target 2500 --max-seq-len 4000`) → retrain 1 epoch → push → re-eval. Every cell
+  is in `setup.md`.

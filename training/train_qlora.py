@@ -166,6 +166,28 @@ def main() -> None:
 
     ds = ds.map(to_text, batched=True, remove_columns=ds.column_names)
 
+    # ---- 2b. Truncation guard (defense-in-depth) ----------------------------
+    # If a rendered example is longer than max_seq_len, SFTTrainer silently
+    # truncates its TAIL -- i.e. the </think> + code + <|im_end|> -- and the model
+    # learns to reason without ever concluding. v2 shipped exactly this bug
+    # (a broken length filter in data prep let median-7.5k-token traces through).
+    # Refuse to train on a corpus that would be tail-truncated.
+    _lens = [len(tokenizer(t, add_special_tokens=False)["input_ids"]) for t in ds["text"]]
+    _over = [n for n in _lens if n > args.max_seq_len]
+    _mx = max(_lens) if _lens else 0
+    print(f"Token lengths: max={_mx}, over-limit={len(_over)}/{len(_lens)} "
+          f"(max_seq_len={args.max_seq_len}).")
+    if _over:
+        frac = len(_over) / len(_lens)
+        msg = (f"{len(_over)}/{len(_lens)} ({frac:.0%}) examples exceed "
+               f"--max-seq-len {args.max_seq_len} (max {_mx}); their reasoning/code "
+               f"tail would be TRUNCATED at train time. Regenerate the corpus with "
+               f"the fixed length filter (data/prepare_reasoning_traces.py) or raise "
+               f"--max-seq-len to >= {_mx}.")
+        if frac > 0.02:
+            raise SystemExit("ABORT: " + msg)
+        print("WARNING: " + msg)
+
     # ---- 3. Trainer ---------------------------------------------------------
     # NOTE: recent TRL moved dataset_text_field / packing / sequence length OUT of
     # SFTTrainer kwargs and INTO SFTConfig (and SFTTrainer now takes them via the

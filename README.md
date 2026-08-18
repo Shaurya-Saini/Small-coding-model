@@ -172,10 +172,22 @@ data — a clean v1→v2 ablation.
 - **Phase 0 (analysis, planning, v1 correction): complete.** Base-model survey, RL
   primer, eval overhaul, and all four open decisions (base model, keep-APPS, eval
   precision, RL timing) are resolved.
-- **Phase 1 (data): next.** Choose an OpenCodeReasoning subset that fits a free T4
-  session and write `data/prepare_reasoning_traces.py`.
-- Phases 2–4 (training, eval overhaul, publish) follow. The live checklist is
-  [`V2_PROGRESS.md`](./V2_PROGRESS.md).
+- **Phases 1–2 (data + training): first attempt done, and it failed — instructively.**
+  A QLoRA fine-tune on 2500 OpenCodeReasoning traces trained and pushed, but at
+  evaluation the model reasons endlessly and **never emits a code block** (~0%
+  runnable). Root cause was a **data-preparation bug**, not the method: a length
+  filter silently became a no-op on newer `transformers` (it measured 2 tokens for
+  every example), so over-long traces slipped through and had their solution/close
+  tags **truncated during training** — the model literally learned to reason without
+  concluding. Both the filter and a new train-time truncation guard are fixed; a
+  clean **v2.1 retrain** is the next step. (A textbook case of the project's own
+  thesis: measure honestly, and a broken pipeline — here in *data prep* — can masquerade
+  as a broken model.)
+- **Phase 3 (eval): reasoning-aware APPS path built.** The harness now serves the v2
+  model its own training prompt, strips the `<think>` scratchpad, and extracts the
+  final code block; the base re-eval is healthy. LiveCodeBench (bf16 headline) +
+  HumanEval+/MBPP+ sanity are still to come.
+- The live checklist is [`V2_PROGRESS.md`](./V2_PROGRESS.md).
 
 ---
 
