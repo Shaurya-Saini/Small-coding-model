@@ -39,33 +39,57 @@ BUGGY = re.compile(
 OVERRIDE_MARKER = "# --- SCM prompt+postprocess override ---"
 # Appended to the module AFTER the classes are defined. A raw string (r'''...''')
 # so the `\n`, `\s` inside stay as literal backslash-escapes in the written file.
+#
+# TWO prompt styles, selected at import time by env var SCM_EVAL_STYLE:
+#   * "v1" (default) -- the v1/base model: bare-instruct QUESTION/ANSWER body in the
+#     Qwen chat template. Correct for Qwen2.5-Coder-7B-Instruct and the v1 APPS
+#     fine-tune (both trained/used with this exact text).
+#   * "v2" -- the v2 reasoning fine-tune (…-ocr-qlora): rebuilds the OpenCodeReasoning
+#     training prompt (INSTRUCTION + question, chat template, default system msg),
+#     appends the APPS Standard-Input/Call-Based I/O hint, and on the way OUT strips
+#     the <think>…</think> scratchpad and extracts the LAST ```python fence (the
+#     final solution after the reasoning). Feeding the v2 model the v1 prompt, or a
+#     small token budget, or grabbing the FIRST fence (which may be exploratory code
+#     inside <think>) would reproduce v1's train/eval-mismatch failure -- see
+#     CLAUDE.md §8. The wrapper raises --max_length_generation for v2 accordingly.
+# The base instruct model uses the same chat template in both styles, so the
+# before/after comparison stays fair.
 OVERRIDE = r'''
 
 # --- SCM prompt+postprocess override ---
-# The fine-tuned model was trained INSIDE Qwen's chat template with the exact
-# QUESTION/ANSWER text from data/prepare_apps.py. The harness feeds a bare
-# QUESTION:/ANSWER: string with no chat structure, which drives the model
-# off-distribution (systematic broken output). We rebuild the training-time prompt
-# (chat template + system msg + assistant cue), and extract the assistant turn back
-# out. The base instruct model uses the same template, so the comparison stays fair.
+import os as _scm_os
 import re as _scm_re
 import json as _scm_json
 
 _SCM_SYS = "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
 
+# MUST stay byte-identical to INSTRUCTION in data/prepare_reasoning_traces.py --
+# any drift puts the v2 model off-distribution at eval (the whole v1 bug).
+_SCM_V2_INSTRUCTION = (
+    "You are an expert competitive programmer. Solve the following problem.\n"
+    "Reason step by step inside <think> </think> tags, then give the complete, "
+    "correct solution as a single Python code block.\n\n"
+)
 
-def _scm_get_prompt(self, doc):
-    question = doc.get("question", "") or ""
-    starter = doc.get("starter_code", "") or ""
-    fn_name = None
+_SCM_FENCE_RE = r"```(?:python|py)?\s*\n?(.*?)```"
+
+
+def _scm_io_fn_name(doc):
     io_raw = doc.get("input_output")
     if io_raw:
         try:
             _io = _scm_json.loads(io_raw, parse_int=str)
             if isinstance(_io, dict):
-                fn_name = _io.get("fn_name")
+                return _io.get("fn_name")
         except Exception:
             pass
+    return None
+
+
+def _scm_get_prompt(self, doc):
+    question = doc.get("question", "") or ""
+    starter = doc.get("starter_code", "") or ""
+    fn_name = _scm_io_fn_name(doc)
     starter_block = ("\n" + starter + "\n") if starter.strip() else "\n"
     io_hint = "Use Call-Based format\n" if fn_name else "Use Standard Input format\n"
     body = "QUESTION:\n" + question + "\n" + starter_block + io_hint + "ANSWER:\n"
@@ -86,14 +110,54 @@ def _scm_postprocess_generation(self, generation, idx):
             pass
     for _tok in ("<|im_end|>", "<|endoftext|>"):
         generation = generation.split(_tok)[0]
-    _fence = _scm_re.search(r"```(?:python|py)?\s*\n?(.*?)```", generation, _scm_re.DOTALL)
+    _fence = _scm_re.search(_SCM_FENCE_RE, generation, _scm_re.DOTALL)
     if _fence:
         generation = _fence.group(1)
     return generation
 
 
-GeneralAPPS.get_prompt = _scm_get_prompt
-GeneralAPPS.postprocess_generation = _scm_postprocess_generation
+def _scm_v2_get_prompt(self, doc):
+    # Reproduce the OpenCodeReasoning training prompt (INSTRUCTION + question) and
+    # append the APPS I/O contract so stdin/stdout vs call-based is unambiguous.
+    question = doc.get("question", "") or ""
+    starter = doc.get("starter_code", "") or ""
+    fn_name = _scm_io_fn_name(doc)
+    starter_block = ("\n\n" + starter.strip() + "\n") if starter.strip() else ""
+    io_hint = ("\nUse Call-Based format.\n" if fn_name
+               else "\nUse Standard Input format.\n")
+    body = _SCM_V2_INSTRUCTION + question + starter_block + io_hint
+    return ("<|im_start|>system\n" + _SCM_SYS + "<|im_end|>\n"
+            "<|im_start|>user\n" + body + "<|im_end|>\n<|im_start|>assistant\n")
+
+
+def _scm_v2_postprocess_generation(self, generation, idx):
+    # Assistant turn only, markers stripped.
+    if "<|im_start|>assistant" in generation:
+        generation = generation.split("<|im_start|>assistant")[-1]
+        if generation.startswith("\n"):
+            generation = generation[1:]
+    for _tok in ("<|im_end|>", "<|endoftext|>"):
+        generation = generation.split(_tok)[0]
+    # Drop the reasoning scratchpad: keep only what follows the LAST </think>.
+    _low = generation.lower()
+    if "</think>" in _low:
+        generation = generation[_low.rindex("</think>") + len("</think>"):]
+    # The final solution is the LAST fence (earlier fences may be exploratory code
+    # the model wrote while reasoning). No fence -> return as-is (a genuine miss).
+    _fences = _scm_re.findall(_SCM_FENCE_RE, generation, _scm_re.DOTALL)
+    if _fences:
+        generation = _fences[-1]
+    return generation
+
+
+_SCM_STYLE = _scm_os.environ.get("SCM_EVAL_STYLE", "v1").strip().lower()
+if _SCM_STYLE == "v2":
+    GeneralAPPS.get_prompt = _scm_v2_get_prompt
+    GeneralAPPS.postprocess_generation = _scm_v2_postprocess_generation
+else:
+    GeneralAPPS.get_prompt = _scm_get_prompt
+    GeneralAPPS.postprocess_generation = _scm_postprocess_generation
+print("[SCM] APPS prompt/postprocess style =", _SCM_STYLE)
 # --- end SCM prompt+postprocess override ---
 '''
 

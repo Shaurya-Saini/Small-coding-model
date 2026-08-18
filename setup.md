@@ -171,29 +171,52 @@ pip install "datasets>=2.16,<4.0" "transformers>=4.44,<5.0" bitsandbytes
 ### 2.2 Preflight + one-time tokenizer repair
 ```bash
 python /path/to/SCM/eval/preflight.py                                   # want "Preflight PASSED"
+# Repair the v2 tokenizer on the Hub (Unsloth pushes extra_special_tokens as a v5
+# list; transformers 4.x wants a dict). REQUIRED for the fine-tuned model or it
+# fails to load. Base model is unaffected.
 python /path/to/SCM/eval/fix_tokenizer_config.py --repo <user>/qwen2.5-coder-7b-ocr-qlora
 ```
+If preflight fails only on `pyext` (`inspect.getargspec`), run
+`python /path/to/SCM/eval/fix_pyext_py312.py` and re-run preflight — it edits the
+installed `pyext.py` in place (idempotent).
 
 ### 2.3 Generate on APPS test (harness), then SCORE with score_apps.py
 `run_apps_eval.sh` auto-applies the harness patches and saves generations.
 **Do NOT trust the harness's own `*_metrics.json`** — its APPS scorer is broken for
 this setup (see CLAUDE.md §8). Score the saved generations with `score_apps.py`.
 
-> **Reasoning models emit long `<think>` before the code.** For the v2 model, give
-> generation a large `--max_new_tokens` and ensure code extraction takes the **last**
-> ```python fence after the reasoning (Phase 3 wires this into the generation step;
-> `score_apps.py` scores already-extracted code).
+> **`HARNESS_MAIN` must point at the harness's real `main.py`.** A fresh `!bash`
+> cell resets cwd to `/kaggle/working`, so `$(pwd)/main.py` only works if you first
+> **`%cd` into the cloned harness dir** (below). A wrong path both crashes AND
+> silently skips the critical `fix_harness_apps.py` patch (`WARN: harness apps.py
+> not found …`) — watch for `[SCM] APPS prompt/postprocess style = …` in the log to
+> confirm the patch ran.
+
+> **v2 is a reasoning model** — it emits a long `<think>` before the code. Pass
+> `PROMPT_STYLE=v2` for the fine-tune: the wrapper then rebuilds the
+> OpenCodeReasoning training prompt, raises `--max_length_generation` to 6144 (a
+> 2048 budget truncates before any code → spurious 0%), strips `<think>…</think>`,
+> and extracts the **last** ```python fence. The base model uses the default
+> `PROMPT_STYLE=v1`. `score_apps.py` scores the already-extracted code.
 
 ```bash
-# generate (base and v2 fine-tune), 150/tier
-LIMIT=150 NUM_PROCESSES=2 MODEL=<user>/qwen2.5-coder-7b-ocr-qlora LABEL=finetuned \
+%cd /kaggle/working/bigcode-evaluation-harness   # so $(pwd)/main.py resolves
+
+# ALWAYS smoke single-GPU first (LIMIT=10, NUM_PROCESSES=1): one clean traceback on
+# error instead of a buried ChildFailedError, and it confirms the patch/prompt.
+LIMIT=10 NUM_PROCESSES=1 MODEL=Qwen/Qwen2.5-Coder-7B-Instruct LABEL=base \
   HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
+
+# Only after a clean smoke: full tiers, 150/problem, T4 x2. Base = v1 prompt (default).
 LIMIT=150 NUM_PROCESSES=2 MODEL=Qwen/Qwen2.5-Coder-7B-Instruct LABEL=base \
+  HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
+# v2 fine-tune = reasoning prompt + big gen budget. Smoke it single-GPU first too.
+LIMIT=150 NUM_PROCESSES=2 PROMPT_STYLE=v2 MODEL=<user>/qwen2.5-coder-7b-ocr-qlora LABEL=finetuned \
   HARNESS_MAIN=$(pwd)/main.py bash /path/to/SCM/eval/run_apps_eval.sh
 
 # score (replaces the harness scorer); base/introductory should be ~16%
 python /path/to/SCM/eval/score_apps.py \
-  --results-dir /path/to/SCM/results/apps --labels base,finetuned --max-tests 25 \
+  --results-dir results/apps --labels base,finetuned --max-tests 25 \
   --scores-out /path/to/SCM/results/scores.rescored.json
 ```
 

@@ -340,6 +340,26 @@ Directories are created by the phase that needs them.
 - Always run `eval/preflight.py` and a `LIMIT=10` smoke before a full run.
 - Diagnose any surprising 0.0 by dumping a generation (`print(gens[i][0])`): 100%
   *compile* errors means a format/extraction issue, not model quality.
+- **`HARNESS_MAIN` path trap (hit again in v2, 2026-08-18):** a fresh `!bash` cell's
+  cwd is `/kaggle/working`, so `HARNESS_MAIN=$(pwd)/main.py` points at a nonexistent
+  file *and* makes the wrapper derive the wrong `HARNESS_DIR` → it **silently skips**
+  `fix_harness_apps.py` (`WARN: harness apps.py not found …`), which would give
+  ~100% compile errors even if main.py were found. Fix: `%cd` into the cloned
+  `bigcode-evaluation-harness` first. Confirm the patch actually ran by watching for
+  `[SCM] APPS prompt/postprocess style = …` in the log. And smoke with
+  `NUM_PROCESSES=1` — with 2, the real one-line error is buried under a
+  distributed `ChildFailedError`.
+- **v2 is a REASONING model → the harness needs a v2 prompt/postprocess (added
+  2026-08-18).** `fix_harness_apps.py` now carries TWO styles, selected by env
+  `SCM_EVAL_STYLE` (the wrapper sets it from `PROMPT_STYLE`, default `v1`):
+  * `v1` — base + v1 APPS model: the QUESTION/ANSWER chat prompt, first-fence extract.
+  * `v2` — the `…-ocr-qlora` fine-tune: rebuilds the OpenCodeReasoning training prompt
+    (`INSTRUCTION` byte-identical to `prepare_reasoning_traces.py`) + the APPS I/O
+    hint, strips `<think>…</think>`, extracts the **LAST** ```python fence, and the
+    wrapper raises `--max_length_generation` to 6144 (a 2048 budget truncates before
+    any code appears → spurious 0%). Feeding v2 the v1 prompt / small budget / first
+    fence would reproduce v1's train↔eval mismatch. Run the fine-tune with
+    `PROMPT_STYLE=v2`; the base with the default.
 
 ---
 

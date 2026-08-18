@@ -53,7 +53,20 @@ MODEL="${MODEL:?set MODEL to an HF model id}"
 LABEL="${LABEL:?set LABEL, e.g. base | finetuned}"
 N_SAMPLES="${N_SAMPLES:-1}"           # 1 -> pass@1; raise (e.g. 20) for pass@k
 TEMPERATURE="${TEMPERATURE:-0.2}"     # use ~0.6-0.8 when N_SAMPLES>1
-MAX_GEN_LEN="${MAX_GEN_LEN:-2048}"
+PROMPT_STYLE="${PROMPT_STYLE:-v1}"    # v1 = QUESTION/ANSWER prompt (base + v1 APPS
+                                      # fine-tune). v2 = OpenCodeReasoning prompt for
+                                      # the …-ocr-qlora reasoning model (strips
+                                      # <think>, takes the LAST code fence). Consumed
+                                      # by fix_harness_apps.py via SCM_EVAL_STYLE.
+export SCM_EVAL_STYLE="${PROMPT_STYLE}"
+# Reasoning models emit a long <think> BEFORE the code, so a 2048 budget truncates
+# before any solution appears -> spurious 0%. Give v2 a much larger default (still
+# overridable). v1/base is non-reasoning, so 2048 stays fast and sufficient.
+if [ "${PROMPT_STYLE}" = "v2" ]; then
+  MAX_GEN_LEN="${MAX_GEN_LEN:-6144}"
+else
+  MAX_GEN_LEN="${MAX_GEN_LEN:-2048}"
+fi
 BATCH_SIZE="${BATCH_SIZE:-1}"
 PRECISION="${PRECISION:-fp16}"        # T4 has no bf16 -> fp16 (ignored when quantized)
 EOS="${EOS:-<|im_end|>}"              # Qwen chat turn-end. Without this the harness eos
